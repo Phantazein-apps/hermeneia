@@ -139,6 +139,25 @@ export function upsertContact(opts: {
   }
 }
 
+/** Diagnostic: return DB stats for debugging contact resolution */
+export function getStoreDiagnostics(): any {
+  const chatCount = queryOne("SELECT COUNT(*) as n FROM chats");
+  const chatWithName = queryOne("SELECT COUNT(*) as n FROM chats WHERE name IS NOT NULL AND name != ''");
+  const contactCount = queryOne("SELECT COUNT(*) as n FROM contacts");
+  const contactWithName = queryOne("SELECT COUNT(*) as n FROM contacts WHERE name IS NOT NULL OR notify IS NOT NULL OR verified_name IS NOT NULL");
+  const msgCount = queryOne("SELECT COUNT(*) as n FROM messages");
+  const sampleContacts = queryAll("SELECT * FROM contacts LIMIT 5");
+  const sampleChats = queryAll("SELECT jid, name FROM chats LIMIT 5");
+
+  return {
+    chats: { total: chatCount?.n, withName: chatWithName?.n },
+    contacts: { total: contactCount?.n, withName: contactWithName?.n },
+    messages: { total: msgCount?.n },
+    sampleContacts,
+    sampleChats,
+  };
+}
+
 /** Resolve display name for any JID (LID, phone, or group) */
 export function resolveContactName(jid: string): string | null {
   // 1. Direct contact lookup by id

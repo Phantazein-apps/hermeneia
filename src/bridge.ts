@@ -14,7 +14,7 @@ import makeWASocket, {
   type WASocket,
 } from "@whiskeysockets/baileys";
 import type { proto } from "@whiskeysockets/baileys";
-import { mkdirSync } from "fs";
+import { mkdirSync, appendFileSync } from "fs";
 import { join } from "path";
 import { EventEmitter } from "events";
 import { upsertChat, storeMessage, upsertContact } from "./store.js";
@@ -24,6 +24,15 @@ import type { BridgeStatus } from "./types.js";
 export type { WASocket };
 
 const log = (msg: string) => console.error(`[hermeneia] ${msg}`);
+
+let debugLogPath: string | null = null;
+function debugLog(label: string, data: any): void {
+  if (!debugLogPath) return;
+  try {
+    const line = `[${new Date().toISOString()}] ${label}: ${JSON.stringify(data, null, 2)}\n`;
+    appendFileSync(debugLogPath, line);
+  } catch {}
+}
 
 export class WhatsAppBridge extends EventEmitter {
   private sock: WASocket | null = null;
@@ -40,6 +49,7 @@ export class WhatsAppBridge extends EventEmitter {
     this.authDir = join(dataDir, "auth");
     mkdirSync(this.authDir, { recursive: true });
     mkdirSync(join(dataDir, "media"), { recursive: true });
+    debugLogPath = join(dataDir, "debug.log");
   }
 
   get status(): BridgeStatus {
@@ -145,6 +155,12 @@ export class WhatsAppBridge extends EventEmitter {
     });
 
     this.sock.ev.on("contacts.upsert", (contacts) => {
+      debugLog("contacts.upsert", contacts.slice(0, 5).map(c => ({
+        id: c.id, lid: (c as any).lid, jid: (c as any).jid,
+        name: c.name, notify: c.notify, verifiedName: c.verifiedName,
+        allKeys: Object.keys(c),
+      })));
+      log(`contacts.upsert: ${contacts.length} contacts`);
       for (const contact of contacts) {
         if (!contact.id) continue;
         upsertContact({
@@ -159,6 +175,12 @@ export class WhatsAppBridge extends EventEmitter {
     });
 
     this.sock.ev.on("contacts.update", (updates) => {
+      debugLog("contacts.update", updates.slice(0, 5).map(c => ({
+        id: c.id, lid: (c as any).lid, jid: (c as any).jid,
+        name: c.name, notify: c.notify, verifiedName: c.verifiedName,
+        allKeys: Object.keys(c),
+      })));
+      log(`contacts.update: ${updates.length} contacts`);
       for (const contact of updates) {
         if (!contact.id) continue;
         upsertContact({
@@ -176,6 +198,15 @@ export class WhatsAppBridge extends EventEmitter {
 
     this.sock.ev.on("messaging-history.set", ({ chats, messages, contacts, isLatest }) => {
       log(`History sync: ${chats.length} chats, ${messages.length} msgs, ${contacts.length} contacts`);
+      debugLog("messaging-history.set.contacts", contacts.slice(0, 5).map(c => ({
+        id: c.id, lid: (c as any).lid, jid: (c as any).jid,
+        name: c.name, notify: c.notify, verifiedName: c.verifiedName,
+        allKeys: Object.keys(c),
+      })));
+      debugLog("messaging-history.set.chats", chats.slice(0, 5).map(c => ({
+        id: c.id, name: c.name, conversationTimestamp: (c as any).conversationTimestamp,
+        allKeys: Object.keys(c),
+      })));
 
       // Contacts first — build name map before processing chats/messages
       for (const contact of contacts) {

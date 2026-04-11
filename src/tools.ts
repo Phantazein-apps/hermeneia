@@ -19,6 +19,7 @@ import {
   getLastInteraction,
   getMessageContext,
   getSenderName,
+  getStoreDiagnostics,
 } from "./store.js";
 
 export function registerTools(server: Server, bridge: WhatsAppBridge): void {
@@ -33,7 +34,12 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
         case "check_status": {
           const status = bridge.status;
           if (status.connected && status.authenticated) {
-            return text("WhatsApp is connected and ready.");
+            const diag = getStoreDiagnostics();
+            return json({
+              status: "connected",
+              message: "WhatsApp is connected and ready.",
+              store: diag,
+            });
           }
           if (status.qr_url) {
             return text(
