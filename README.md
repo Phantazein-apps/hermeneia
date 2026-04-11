@@ -7,7 +7,7 @@ WhatsApp bridge for Claude. Drag to install, scan a QR code, chat.
 
 ## Install
 
-Download `hermeneia.mcpb` from [Releases](https://github.com/phantazein/hermeneia/releases/latest) and drag it into Claude Desktop.
+Download `hermeneia.mcpb` from [Releases](https://github.com/Phantazein-apps/hermeneia/releases/latest) and drag it into Claude Desktop.
 
 That's it. No terminal, no Python, no Go, no config files.
 
@@ -35,7 +35,7 @@ All data stays on your computer. Messages are stored in a local SQLite database.
 ## Development
 
 ```bash
-git clone https://github.com/phantazein/hermeneia.git
+git clone https://github.com/Phantazein-apps/hermeneia.git
 cd hermeneia
 npm install
 npm run dev     # run from source

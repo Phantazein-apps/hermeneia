@@ -9,10 +9,12 @@
   },
   "license": "MIT",
   "repository": {
-    "url": "https://github.com/phantazein/hermeneia"
+    "type": "github",
+    "url": "https://github.com/Phantazein-apps/hermeneia"
   },
   "server": {
     "type": "node",
+    "entry_point": "dist/index.js",
     "mcp_config": {
       "command": "node",
       "args": ["${__dirname}/dist/index.js"],
@@ -30,7 +32,6 @@
       "default": "3456"
     }
   },
-  "setup_instructions": "After installing:\n1. Ask Claude to 'check my WhatsApp status'\n2. A browser page will open with a QR code\n3. Scan it with your phone (WhatsApp > Settings > Linked Devices > Link a Device)\n4. Done — Claude can now read and send your WhatsApp messages",
   "tools": [
     { "name": "check_status", "description": "Check WhatsApp connection status and get setup instructions if needed" },
     { "name": "search_contacts", "description": "Search contacts by name or phone number" },
