@@ -196,17 +196,30 @@ export class WhatsAppBridge extends EventEmitter {
 
     // ── History sync (fires on first connect with recent conversations) ──
 
-    this.sock.ev.on("messaging-history.set", ({ chats, messages, contacts, isLatest }) => {
-      log(`History sync: ${chats.length} chats, ${messages.length} msgs, ${contacts.length} contacts`);
-      debugLog("messaging-history.set.contacts", contacts.slice(0, 5).map(c => ({
-        id: c.id, lid: (c as any).lid, jid: (c as any).jid,
-        name: c.name, notify: c.notify, verifiedName: c.verifiedName,
-        allKeys: Object.keys(c),
-      })));
-      debugLog("messaging-history.set.chats", chats.slice(0, 5).map(c => ({
-        id: c.id, name: c.name, conversationTimestamp: (c as any).conversationTimestamp,
-        allKeys: Object.keys(c),
-      })));
+    this.sock.ev.on("messaging-history.set", (data) => {
+      const { chats, messages, contacts, isLatest } = data;
+      const syncType = (data as any).syncType;
+      log(`History sync [type=${syncType}]: ${chats.length} chats, ${messages.length} msgs, ${contacts.length} contacts`);
+
+      // Count how many contacts have names
+      const namedContacts = contacts.filter(c => c.notify || c.name || c.verifiedName);
+      if (namedContacts.length > 0) {
+        log(`  → ${namedContacts.length}/${contacts.length} contacts have names`);
+      }
+
+      debugLog(`messaging-history.set[type=${syncType}]`, {
+        chats: chats.length,
+        messages: messages.length,
+        contacts: contacts.length,
+        namedContacts: namedContacts.length,
+        sampleContacts: contacts.slice(0, 3).map(c => ({
+          id: c.id, lid: (c as any).lid, jid: (c as any).jid,
+          name: c.name, notify: c.notify, verifiedName: c.verifiedName,
+        })),
+        sampleChats: chats.slice(0, 3).map(c => ({
+          id: c.id, name: c.name,
+        })),
+      });
 
       // Contacts first — build name map before processing chats/messages
       for (const contact of contacts) {
@@ -229,8 +242,20 @@ export class WhatsAppBridge extends EventEmitter {
         upsertChat(chat.id, name, ts);
       }
 
+      // Extract pushNames from history messages — Baileys doesn't do this
+      // for us (it only processes PUSH_NAME sync type, which arrives later).
+      // This is our best chance to get names from the initial sync.
+      let pushNamesFound = 0;
       for (const msg of messages) {
+        if (msg.pushName && msg.key?.remoteJid) {
+          const sender = msg.key.participant ?? msg.key.remoteJid;
+          upsertContact({ id: sender, notify: msg.pushName });
+          pushNamesFound++;
+        }
         this.handleIncomingMessage(msg);
+      }
+      if (pushNamesFound > 0) {
+        log(`  → extracted ${pushNamesFound} push names from history messages`);
       }
 
       if (isLatest) log("History sync complete");
