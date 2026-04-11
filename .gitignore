@@ -1,0 +1,15 @@
+node_modules/
+data/
+.env
+*.mcpb
+
+# Keep dist/ committed (bundled output for .mcpb)
+# dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

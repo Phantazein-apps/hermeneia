@@ -1,0 +1,34 @@
+{
+  "name": "hermeneia",
+  "version": "0.1.0",
+  "description": "WhatsApp bridge for Claude — drag, scan, chat. Zero dependencies.",
+  "author": "Phantazein S.L.",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "dev": "tsx src/index.ts",
+    "mcp": "node dist/index.js",
+    "pack": "npm run build && npx @anthropic-ai/mcpb pack",
+    "validate": "npx @anthropic-ai/mcpb validate"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@whiskeysockets/baileys": "^6.7.21",
+    "open": "^10.1.0",
+    "qrcode": "^1.5.4",
+    "sql.js": "^1.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/qrcode": "^1.5.5",
+    "@types/sql.js": "^1.4.11",
+    "esbuild": "^0.24.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

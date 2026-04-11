@@ -1,0 +1,54 @@
+{
+  "manifest_version": "0.3",
+  "name": "hermeneia",
+  "display_name": "WhatsApp (Hermeneia)",
+  "version": "0.1.0",
+  "description": "Read, search, and send WhatsApp messages from Claude. Drag to install, scan a QR code, and you're done.",
+  "author": {
+    "name": "Phantazein S.L."
+  },
+  "license": "MIT",
+  "repository": {
+    "url": "https://github.com/phantazein/hermeneia"
+  },
+  "server": {
+    "type": "node",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/index.js"],
+      "env": {
+        "HERMENEIA_DATA_DIR": "${__dirname}/data"
+      }
+    }
+  },
+  "user_config": {
+    "qr_port": {
+      "type": "string",
+      "title": "Setup Page Port",
+      "description": "Port for the QR code page (default: 3456). Change if the port is in use.",
+      "required": false,
+      "default": "3456"
+    }
+  },
+  "setup_instructions": "After installing:\n1. Ask Claude to 'check my WhatsApp status'\n2. A browser page will open with a QR code\n3. Scan it with your phone (WhatsApp > Settings > Linked Devices > Link a Device)\n4. Done — Claude can now read and send your WhatsApp messages",
+  "tools": [
+    { "name": "check_status", "description": "Check WhatsApp connection status and get setup instructions if needed" },
+    { "name": "search_contacts", "description": "Search contacts by name or phone number" },
+    { "name": "get_contact", "description": "Look up a contact by phone number or JID" },
+    { "name": "list_messages", "description": "Get messages with filters, date ranges, and sorting" },
+    { "name": "send_message", "description": "Send a text message to a contact or group" },
+    { "name": "send_file", "description": "Send an image, video, or document" },
+    { "name": "send_audio_message", "description": "Send a voice message" },
+    { "name": "download_media", "description": "Download media from a received message" },
+    { "name": "list_chats", "description": "List all chats with metadata" },
+    { "name": "get_chat", "description": "Get specific chat metadata by JID" },
+    { "name": "get_direct_chat_by_contact", "description": "Find a DM chat with a contact" },
+    { "name": "get_contact_chats", "description": "List all chats involving a contact" },
+    { "name": "get_last_interaction", "description": "Get the last message with a contact" },
+    { "name": "get_message_context", "description": "Get messages around a specific message" }
+  ],
+  "compatibility": {
+    "claude_desktop": ">=1.0.0",
+    "platforms": ["darwin", "win32", "linux"]
+  }
+}
