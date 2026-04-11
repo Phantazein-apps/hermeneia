@@ -17,7 +17,7 @@ import type { proto } from "@whiskeysockets/baileys";
 import { mkdirSync } from "fs";
 import { join } from "path";
 import { EventEmitter } from "events";
-import { upsertChat, storeMessage } from "./store.js";
+import { upsertChat, storeMessage, upsertContact } from "./store.js";
 import type { BridgeStatus } from "./types.js";
 
 // Re-export the socket type for tools.ts
@@ -136,7 +136,7 @@ export class WhatsAppBridge extends EventEmitter {
 
     this.sock.ev.on("chats.upsert", (chats) => {
       for (const chat of chats) {
-        const name = chat.name ?? chat.id?.split("@")[0] ?? null;
+        const name = chat.name ?? null;
         const ts = chat.conversationTimestamp
           ? new Date((chat.conversationTimestamp as number) * 1000).toISOString()
           : new Date().toISOString();
@@ -146,26 +146,51 @@ export class WhatsAppBridge extends EventEmitter {
 
     this.sock.ev.on("contacts.upsert", (contacts) => {
       for (const contact of contacts) {
-        if (contact.id && contact.name) {
-          upsertChat(contact.id, contact.name, new Date().toISOString());
-        }
+        if (!contact.id) continue;
+        upsertContact({
+          id: contact.id,
+          lid: (contact as any).lid ?? null,
+          phoneJid: (contact as any).jid ?? null,
+          name: contact.name ?? null,
+          notify: contact.notify ?? null,
+          verifiedName: contact.verifiedName ?? null,
+        });
+      }
+    });
+
+    this.sock.ev.on("contacts.update", (updates) => {
+      for (const contact of updates) {
+        if (!contact.id) continue;
+        upsertContact({
+          id: contact.id,
+          lid: (contact as any).lid ?? null,
+          phoneJid: (contact as any).jid ?? null,
+          name: contact.name ?? null,
+          notify: contact.notify ?? null,
+          verifiedName: contact.verifiedName ?? null,
+        });
       }
     });
 
     // ── History sync (fires on first connect with recent conversations) ──
 
     this.sock.ev.on("messaging-history.set", ({ chats, messages, contacts, isLatest }) => {
-      log(`History sync: ${chats.length} chats, ${messages.length} messages, ${contacts.length} contacts`);
+      log(`History sync: ${chats.length} chats, ${messages.length} msgs, ${contacts.length} contacts`);
 
       // Contacts first — build name map before processing chats/messages
       for (const contact of contacts) {
         if (!contact.id) continue;
-        const name = contact.notify ?? contact.name ?? null;
-        if (name) upsertChat(contact.id, name, new Date(0).toISOString());
+        upsertContact({
+          id: contact.id,
+          lid: (contact as any).lid ?? null,
+          phoneJid: (contact as any).jid ?? null,
+          name: contact.name ?? null,
+          notify: contact.notify ?? null,
+          verifiedName: contact.verifiedName ?? null,
+        });
       }
 
       for (const chat of chats) {
-        // chat.name is the display name for groups; for DMs it may be absent
         const name = chat.name ?? null;
         const ts = chat.conversationTimestamp
           ? new Date((chat.conversationTimestamp as number) * 1000).toISOString()
@@ -206,10 +231,12 @@ export class WhatsAppBridge extends EventEmitter {
     const chatName =
       pushName && !chatJid.endsWith("@g.us") ? pushName : null;
 
-    // Store chat — also update sender's name entry if we have a push name
+    // Store chat
     upsertChat(chatJid, chatName, timestamp);
-    if (pushName && sender !== chatJid) {
-      upsertChat(sender, pushName, timestamp);
+
+    // Store push name as contact info (works for both LIDs and phone JIDs)
+    if (pushName && sender) {
+      upsertContact({ id: sender, notify: pushName });
     }
 
     // Store message

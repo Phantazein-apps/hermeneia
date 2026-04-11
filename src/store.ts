@@ -59,6 +59,20 @@ export async function initStore(dataDir: string): Promise<void> {
     )
   `);
 
+  // Contacts table — maps LIDs to phone JIDs and stores all name variants
+  db.run(`
+    CREATE TABLE IF NOT EXISTS contacts (
+      id TEXT PRIMARY KEY,
+      lid TEXT,
+      phone_jid TEXT,
+      name TEXT,
+      notify TEXT,
+      verified_name TEXT
+    )
+  `);
+  db.run("CREATE INDEX IF NOT EXISTS idx_contacts_lid ON contacts(lid)");
+  db.run("CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone_jid)");
+
   db.run(`
     CREATE TABLE IF NOT EXISTS messages (
       id TEXT,
@@ -90,6 +104,68 @@ export async function initStore(dataDir: string): Promise<void> {
     flush();
     process.exit(0);
   });
+}
+
+// ── Contact operations ─────────────────────────────────────────────
+
+export function upsertContact(opts: {
+  id: string;
+  lid?: string | null;
+  phoneJid?: string | null;
+  name?: string | null;
+  notify?: string | null;
+  verifiedName?: string | null;
+}): void {
+  db.run(
+    `INSERT INTO contacts (id, lid, phone_jid, name, notify, verified_name)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       lid = COALESCE(excluded.lid, contacts.lid),
+       phone_jid = COALESCE(excluded.phone_jid, contacts.phone_jid),
+       name = COALESCE(excluded.name, contacts.name),
+       notify = COALESCE(excluded.notify, contacts.notify),
+       verified_name = COALESCE(excluded.verified_name, contacts.verified_name)`,
+    [opts.id, opts.lid ?? null, opts.phoneJid ?? null, opts.name ?? null, opts.notify ?? null, opts.verifiedName ?? null]
+  );
+  maybeFlush();
+
+  // Also update the chats table name if we have one
+  const displayName = opts.name ?? opts.notify ?? opts.verifiedName ?? null;
+  if (displayName) {
+    upsertChat(opts.id, displayName, new Date(0).toISOString());
+    // If we know the LID and phone JID, update both chat entries
+    if (opts.lid) upsertChat(opts.lid, displayName, new Date(0).toISOString());
+    if (opts.phoneJid) upsertChat(opts.phoneJid, displayName, new Date(0).toISOString());
+  }
+}
+
+/** Resolve display name for any JID (LID, phone, or group) */
+export function resolveContactName(jid: string): string | null {
+  // 1. Direct contact lookup by id
+  const direct = queryOne(
+    "SELECT name, notify, verified_name FROM contacts WHERE id = ?",
+    [jid]
+  );
+  if (direct) {
+    const n = direct.name ?? direct.notify ?? direct.verified_name;
+    if (n) return n;
+  }
+
+  // 2. Cross-reference: if this is a LID, find via lid column; if phone, via phone_jid
+  const crossRef = queryOne(
+    "SELECT name, notify, verified_name FROM contacts WHERE lid = ? OR phone_jid = ?",
+    [jid, jid]
+  );
+  if (crossRef) {
+    const n = crossRef.name ?? crossRef.notify ?? crossRef.verified_name;
+    if (n) return n;
+  }
+
+  // 3. Fall back to chats table
+  const chat = queryOne("SELECT name FROM chats WHERE jid = ?", [jid]);
+  if (chat?.name) return chat.name;
+
+  return null;
 }
 
 // ── Chat operations ────────────────────────────────────────────────
@@ -150,17 +226,7 @@ function queryOne(sql: string, params: any[] = []): any | null {
 }
 
 export function getSenderName(senderJid: string): string {
-  const row = queryOne("SELECT name FROM chats WHERE jid = ? LIMIT 1", [
-    senderJid,
-  ]);
-  if (row?.name) return row.name;
-
-  const phone = senderJid.split("@")[0];
-  const fallback = queryOne(
-    "SELECT name FROM chats WHERE jid LIKE ? LIMIT 1",
-    [`%${phone}%`]
-  );
-  return fallback?.name ?? senderJid;
+  return resolveContactName(senderJid) ?? senderJid;
 }
 
 function toMessageDict(row: any, includeSenderName = true): MessageDict {
@@ -336,7 +402,7 @@ export function listChats(opts: {
 
   return queryAll(sql, params).map((r) => ({
     jid: r.jid,
-    name: r.name,
+    name: r.name || resolveContactName(r.jid) || r.jid.split("@")[0],
     is_group: (r.jid as string).endsWith("@g.us"),
     last_message_time: r.last_message_time,
     last_message: r.last_message,
@@ -362,7 +428,7 @@ export function getChat(chatJid: string, includeLastMessage = true): ChatDict | 
 
   return {
     jid: row.jid,
-    name: row.name,
+    name: row.name || resolveContactName(row.jid) || row.jid.split("@")[0],
     is_group: (row.jid as string).endsWith("@g.us"),
     last_message_time: row.last_message_time,
     last_message: row.last_message,
@@ -429,16 +495,52 @@ export function getLastInteraction(jid: string): MessageDict | null {
 
 export function searchContacts(query: string): ContactDict[] {
   const pattern = `%${query}%`;
-  return queryAll(
+
+  // Search both the contacts table and chats table, merge results
+  const fromContacts = queryAll(
+    `SELECT id, lid, phone_jid, name, notify, verified_name FROM contacts
+     WHERE LOWER(COALESCE(name, '')) LIKE LOWER(?)
+        OR LOWER(COALESCE(notify, '')) LIKE LOWER(?)
+        OR LOWER(COALESCE(verified_name, '')) LIKE LOWER(?)
+        OR LOWER(id) LIKE LOWER(?)
+        OR LOWER(COALESCE(phone_jid, '')) LIKE LOWER(?)
+     LIMIT 50`,
+    [pattern, pattern, pattern, pattern, pattern]
+  );
+
+  const fromChats = queryAll(
     `SELECT DISTINCT jid, name FROM chats
      WHERE (LOWER(name) LIKE LOWER(?) OR LOWER(jid) LIKE LOWER(?))
        AND jid NOT LIKE '%@g.us'
      ORDER BY name, jid
      LIMIT 50`,
     [pattern, pattern]
-  ).map((r) => ({
-    phone_number: (r.jid as string).split("@")[0],
-    name: r.name,
-    jid: r.jid,
-  }));
+  );
+
+  // Deduplicate by JID
+  const seen = new Set<string>();
+  const results: ContactDict[] = [];
+
+  for (const r of fromContacts) {
+    const jid = r.phone_jid ?? r.id;
+    if (seen.has(jid)) continue;
+    seen.add(jid);
+    results.push({
+      phone_number: (r.phone_jid ?? r.id).split("@")[0],
+      name: r.name ?? r.notify ?? r.verified_name ?? null,
+      jid: r.phone_jid ?? r.id,
+    });
+  }
+
+  for (const r of fromChats) {
+    if (seen.has(r.jid)) continue;
+    seen.add(r.jid);
+    results.push({
+      phone_number: (r.jid as string).split("@")[0],
+      name: r.name ?? resolveContactName(r.jid) ?? null,
+      jid: r.jid,
+    });
+  }
+
+  return results;
 }
