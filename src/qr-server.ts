@@ -58,8 +58,30 @@ const SETUP_HTML = `<!DOCTYPE html>
       background: white;
       border-radius: 12px;
       display: inline-block;
+      min-width: 256px;
+      min-height: 256px;
+      position: relative;
     }
     #qr-container img { display: block; width: 256px; height: 256px; }
+    #qr-container img[src=""] { display: none; }
+    .spinner-wrap {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+    }
+    .spinner {
+      width: 40px; height: 40px;
+      border: 3px solid #eee;
+      border-top-color: #25D366;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner-label { color: #aaa; font-size: 13px; }
     .steps {
       text-align: left;
       margin-top: 24px;
@@ -88,6 +110,10 @@ const SETUP_HTML = `<!DOCTYPE html>
 
     <div id="qr-view">
       <div id="qr-container">
+        <div class="spinner-wrap" id="spinner">
+          <div class="spinner"></div>
+          <span class="spinner-label">Connecting… this takes ~15 seconds</span>
+        </div>
         <img id="qr-img" src="" alt="QR Code" />
       </div>
       <ol class="steps">
@@ -116,7 +142,10 @@ const SETUP_HTML = `<!DOCTYPE html>
           return; // stop polling
         }
         if (data.qr_data_url) {
-          document.getElementById('qr-img').src = data.qr_data_url;
+          const img = document.getElementById('qr-img');
+          img.src = data.qr_data_url;
+          document.getElementById('spinner').style.display = 'none';
+          img.style.display = 'block';
         }
       } catch {}
       setTimeout(poll, 2000);

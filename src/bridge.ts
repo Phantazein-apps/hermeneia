@@ -76,6 +76,7 @@ export class WhatsAppBridge extends EventEmitter {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(state.keys, undefined as any),
       },
+      browser: ["Hermeneia for Claude", "Desktop", "1.0.0"],
       printQRInTerminal: false, // We serve QR via HTTP instead
       generateHighQualityLinkPreview: false,
       syncFullHistory: false,
