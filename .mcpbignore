@@ -1,0 +1,14 @@
+# Only dist/ and manifest.json are needed at runtime
+node_modules/
+src/
+go-bridge/
+.git/
+.github/
+.claude/
+data/
+*.mcpb
+tsconfig.json
+esbuild.config.mjs
+README.md
+LICENSE
+.gitignore

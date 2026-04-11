@@ -33,7 +33,7 @@ function getOrCreateSession(bridge: WhatsAppBridge, accountId: string): QRSessio
 
 function setupHtml(accountId: string): string {
   const title = accountId === "default" ? "Connect WhatsApp" : `Connect WhatsApp — ${accountId}`;
-  return SETUP_HTML.replace("{{TITLE}}", title).replace("{{ACCOUNT_ID}}", accountId);
+  return SETUP_HTML.replaceAll("{{TITLE}}", title).replaceAll("{{ACCOUNT_ID}}", accountId);
 }
 
 const SETUP_HTML = `<!DOCTYPE html>
