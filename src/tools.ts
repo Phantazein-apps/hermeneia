@@ -1,14 +1,15 @@
 // Hermeneia — MCP tool definitions
 //
-// 14 tools matching the upstream whatsapp-mcp API, plus check_status.
-// All tools read from SQLite (store.ts) and send via bridge.ts.
+// 14 tools matching the upstream whatsapp-mcp API, plus check_status,
+// list_accounts, add_account, and remove_account.
+// All tools read from SQLite (store.ts) and send via bridge-manager.ts.
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import type { WhatsAppBridge } from "./bridge.js";
+import type { BridgeManager } from "./bridge-manager.js";
 import {
   searchContacts,
   listMessages,
@@ -22,44 +23,92 @@ import {
   getStoreDiagnostics,
 } from "./store.js";
 
-export function registerTools(server: Server, bridge: WhatsAppBridge): void {
-  // ── check_status ────────────────────────────────────────────────
+// Optional account parameter added to all tool schemas
+const accountProp = {
+  account: {
+    type: "string",
+    description:
+      "Account ID to scope this operation to. Omit to search all accounts. Use list_accounts to see available accounts.",
+  },
+};
 
+export function registerTools(server: Server, manager: BridgeManager): void {
   server.setRequestHandler(
     CallToolRequestSchema,
     async (request) => {
       const { name, arguments: args } = request.params;
+      const accountId = args?.account as string | undefined;
 
       switch (name) {
+        // ── Account management ───────────────────────────────────────
+
+        case "list_accounts": {
+          return json(manager.getAllAccountInfo());
+        }
+
+        case "add_account": {
+          const id = (args?.account_name as string)?.toLowerCase().replace(/[^a-z0-9_-]/g, "-");
+          if (!id) return text("Missing required argument: account_name");
+          try {
+            const result = await manager.addAccount(id);
+            return json({
+              message: `Account "${id}" created. Scan the QR code to connect.`,
+              setup_url: result.setupUrl,
+              instructions:
+                "Open the setup URL in your browser, then scan the QR code with WhatsApp on your phone (Settings > Linked Devices > Link a Device).",
+            });
+          } catch (err: any) {
+            return text(err.message);
+          }
+        }
+
+        case "remove_account": {
+          const id = args?.account_id as string;
+          if (!id) return text("Missing required argument: account_id");
+          const removed = await manager.removeAccount(id);
+          return removed
+            ? json({ message: `Account "${id}" removed. Data preserved on disk.` })
+            : text(`Account "${id}" not found`);
+        }
+
+        // ── Status ───────────────────────────────────────────────────
+
         case "check_status": {
-          const status = bridge.status;
-          if (status.connected && status.authenticated) {
-            const diag = getStoreDiagnostics();
+          const accounts = manager.getAllAccountInfo();
+          const connected = accounts.filter((a) => a.connected);
+
+          if (connected.length > 0) {
+            const diagnostics = accountId
+              ? [getStoreDiagnostics(accountId)]
+              : accounts.map((a) => getStoreDiagnostics(a.id));
             return json({
               status: "connected",
-              message: "WhatsApp is connected and ready.",
-              store: diag,
+              message: `${connected.length} account(s) connected.`,
+              accounts,
+              store: diagnostics,
             });
           }
-          if (status.qr_url) {
+
+          // Check if any account has a QR pending
+          const pending = accounts.find((a) => !a.connected);
+          if (pending) {
             return text(
-              `WhatsApp is not connected. Please scan the QR code to authenticate:\n\n` +
-                `Open this URL in your browser: ${status.qr_url}\n\n` +
-                `Then scan the QR code with WhatsApp on your phone:\n` +
-                `Settings > Linked Devices > Link a Device`
+              `No WhatsApp accounts are connected.\n\n` +
+                `Use the add_account tool to connect a new account, or check if an existing account needs re-authentication.`
             );
           }
+
           return text(
-            "WhatsApp is disconnected. The bridge is attempting to reconnect..."
+            "No WhatsApp accounts configured. Use add_account to connect one."
           );
         }
 
-        // ── Contact tools ───────────────────────────────────────────
+        // ── Contact tools ────────────────────────────────────────────
 
         case "search_contacts": {
           const query = args?.query as string;
           if (!query) return text("Missing required argument: query");
-          return json(searchContacts(query));
+          return json(searchContacts(query, accountId));
         }
 
         case "get_contact": {
@@ -89,7 +138,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
           }
 
           const jidUser = jid.split("@")[0];
-          const chat = getChat(jid, false);
+          const chat = getChat(jid, false, accountId);
           let displayName: string | null = null;
           let resolved = false;
 
@@ -97,7 +146,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
             displayName = chat.name;
             resolved = displayName !== jid && displayName !== jidUser;
           } else {
-            displayName = getSenderName(jid);
+            displayName = getSenderName(jid, accountId);
             resolved =
               displayName !== jid &&
               displayName !== jidUser &&
@@ -116,16 +165,15 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
           });
         }
 
-        // ── Message tools ───────────────────────────────────────────
+        // ── Message tools ────────────────────────────────────────────
 
         case "list_messages": {
           return json(
             listMessages({
+              accountId,
               after: args?.after as string | undefined,
               before: args?.before as string | undefined,
-              senderPhoneNumber: args?.sender_phone_number as
-                | string
-                | undefined,
+              senderPhoneNumber: args?.sender_phone_number as string | undefined,
               chatJid: args?.chat_jid as string | undefined,
               query: args?.query as string | undefined,
               limit: args?.limit as number | undefined,
@@ -141,7 +189,8 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
           const result = getMessageContext(
             messageId,
             (args?.before as number) ?? 5,
-            (args?.after as number) ?? 5
+            (args?.after as number) ?? 5,
+            accountId
           );
           return result ? json(result) : text(`Message ${messageId} not found`);
         }
@@ -151,21 +200,24 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
           const message = args?.message as string;
           if (!recipient) return text("Missing required argument: recipient");
           if (!message) return text("Missing required argument: message");
+
+          const bridge = manager.resolveForSend(accountId);
+          if ("error" in bridge) return text(bridge.error);
+
           const result = await bridge.sendMessage(recipient, message);
           return json(result);
         }
 
-        // ── Chat tools ──────────────────────────────────────────────
+        // ── Chat tools ───────────────────────────────────────────────
 
         case "list_chats": {
           return json(
             listChats({
+              accountId,
               query: args?.query as string | undefined,
               limit: args?.limit as number | undefined,
               page: args?.page as number | undefined,
-              includeLastMessage: args?.include_last_message as
-                | boolean
-                | undefined,
+              includeLastMessage: args?.include_last_message as boolean | undefined,
               sortBy: args?.sort_by as "last_active" | "name" | undefined,
             })
           );
@@ -176,7 +228,8 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
           if (!chatJid) return text("Missing required argument: chat_jid");
           const chat = getChat(
             chatJid,
-            (args?.include_last_message as boolean) ?? true
+            (args?.include_last_message as boolean) ?? true,
+            accountId
           );
           return chat ? json(chat) : text(`Chat ${chatJid} not found`);
         }
@@ -185,7 +238,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
           const phone = args?.sender_phone_number as string;
           if (!phone)
             return text("Missing required argument: sender_phone_number");
-          const chat = getDirectChatByContact(phone);
+          const chat = getDirectChatByContact(phone, accountId);
           return chat
             ? json(chat)
             : text(`No direct chat found for ${phone}`);
@@ -198,7 +251,8 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
             getContactChats(
               jid,
               (args?.limit as number) ?? 20,
-              (args?.page as number) ?? 0
+              (args?.page as number) ?? 0,
+              accountId
             )
           );
         }
@@ -206,17 +260,21 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
         case "get_last_interaction": {
           const jid = args?.jid as string;
           if (!jid) return text("Missing required argument: jid");
-          const msg = getLastInteraction(jid);
+          const msg = getLastInteraction(jid, accountId);
           return msg ? json(msg) : text(`No messages found for ${jid}`);
         }
 
-        // ── Media tools ─────────────────────────────────────────────
+        // ── Media tools ──────────────────────────────────────────────
 
         case "send_file": {
           const recipient = args?.recipient as string;
           const mediaPath = args?.media_path as string;
           if (!recipient) return text("Missing required argument: recipient");
           if (!mediaPath) return text("Missing required argument: media_path");
+
+          const bridge = manager.resolveForSend(accountId);
+          if ("error" in bridge) return text(bridge.error);
+
           const result = await bridge.sendFile(recipient, mediaPath);
           return json(result);
         }
@@ -226,13 +284,15 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
           const mediaPath = args?.media_path as string;
           if (!recipient) return text("Missing required argument: recipient");
           if (!mediaPath) return text("Missing required argument: media_path");
-          // Baileys handles audio conversion internally for ogg/opus
+
+          const bridge = manager.resolveForSend(accountId);
+          if ("error" in bridge) return text(bridge.error);
+
           const result = await bridge.sendFile(recipient, mediaPath);
           return json(result);
         }
 
         case "download_media": {
-          // TODO: implement media download from message store
           return text(
             "Media download requires the original message object. " +
               "This feature is coming in a future version."
@@ -251,11 +311,56 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
     ListToolsRequestSchema,
     async () => ({
       tools: [
+        // Account management tools
+        {
+          name: "list_accounts",
+          description:
+            "List all connected WhatsApp accounts with their status, phone numbers, and names.",
+          inputSchema: { type: "object", properties: {} },
+          annotations: { readOnlyHint: true, openWorldHint: false },
+        },
+        {
+          name: "add_account",
+          description:
+            "Connect a new WhatsApp account. Opens a QR code page in the browser for scanning.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              account_name: {
+                type: "string",
+                description:
+                  'A short name for this account (e.g. "work", "personal", "mom")',
+              },
+            },
+            required: ["account_name"],
+          },
+          annotations: { readOnlyHint: false, openWorldHint: true },
+        },
+        {
+          name: "remove_account",
+          description:
+            "Disconnect and remove a WhatsApp account. Data is preserved on disk.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              account_id: {
+                type: "string",
+                description: "The account ID to remove (from list_accounts)",
+              },
+            },
+            required: ["account_id"],
+          },
+          annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+        },
+        // Status
         {
           name: "check_status",
           description:
-            "Check WhatsApp connection status. If not connected, returns instructions to authenticate.",
-          inputSchema: { type: "object", properties: {} },
+            "Check WhatsApp connection status for all accounts.",
+          inputSchema: {
+            type: "object",
+            properties: { ...accountProp },
+          },
           annotations: { readOnlyHint: true, openWorldHint: false },
         },
         {
@@ -268,6 +373,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
                 type: "string",
                 description: "Search term to match against names or phones",
               },
+              ...accountProp,
             },
             required: ["query"],
           },
@@ -285,6 +391,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
                 description:
                   'Phone number, LID, or JID (e.g. "12025551234", "12025551234@s.whatsapp.net")',
               },
+              ...accountProp,
             },
             required: ["identifier"],
           },
@@ -293,7 +400,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
         {
           name: "list_messages",
           description:
-            "Get WhatsApp messages with filters, date ranges, and sorting.",
+            "Get WhatsApp messages with filters, date ranges, and sorting. Searches all accounts by default.",
           inputSchema: {
             type: "object",
             properties: {
@@ -321,6 +428,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
                 enum: ["newest", "oldest"],
                 description: "Sort order (default newest)",
               },
+              ...accountProp,
             },
           },
           annotations: { readOnlyHint: true, openWorldHint: false },
@@ -340,6 +448,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
                 type: "number",
                 description: "Messages after (default 5)",
               },
+              ...accountProp,
             },
             required: ["message_id"],
           },
@@ -348,7 +457,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
         {
           name: "send_message",
           description:
-            "Send a WhatsApp text message to a contact or group.",
+            "Send a WhatsApp text message to a contact or group. Must specify account if multiple are connected.",
           inputSchema: {
             type: "object",
             properties: {
@@ -358,6 +467,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
                   "Phone number (no + or symbols) or JID (e.g. 12025551234 or 123@g.us)",
               },
               message: { type: "string", description: "Message text" },
+              ...accountProp,
             },
             required: ["recipient", "message"],
           },
@@ -365,7 +475,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
         },
         {
           name: "list_chats",
-          description: "List WhatsApp chats with metadata.",
+          description: "List WhatsApp chats with metadata. Searches all accounts by default.",
           inputSchema: {
             type: "object",
             properties: {
@@ -381,6 +491,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
                 enum: ["last_active", "name"],
                 description: "Sort order",
               },
+              ...accountProp,
             },
           },
           annotations: { readOnlyHint: true, openWorldHint: false },
@@ -396,6 +507,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
                 type: "boolean",
                 description: "Include last message (default true)",
               },
+              ...accountProp,
             },
             required: ["chat_jid"],
           },
@@ -411,6 +523,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
                 type: "string",
                 description: "Phone number",
               },
+              ...accountProp,
             },
             required: ["sender_phone_number"],
           },
@@ -425,6 +538,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
               jid: { type: "string", description: "Contact JID" },
               limit: { type: "number", description: "Max results (default 20)" },
               page: { type: "number", description: "Page (default 0)" },
+              ...accountProp,
             },
             required: ["jid"],
           },
@@ -437,6 +551,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
             type: "object",
             properties: {
               jid: { type: "string", description: "Contact JID" },
+              ...accountProp,
             },
             required: ["jid"],
           },
@@ -445,7 +560,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
         {
           name: "send_file",
           description:
-            "Send an image, video, or document via WhatsApp.",
+            "Send an image, video, or document via WhatsApp. Must specify account if multiple are connected.",
           inputSchema: {
             type: "object",
             properties: {
@@ -454,6 +569,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
                 type: "string",
                 description: "Absolute path to the file",
               },
+              ...accountProp,
             },
             required: ["recipient", "media_path"],
           },
@@ -462,7 +578,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
         {
           name: "send_audio_message",
           description:
-            "Send a voice message via WhatsApp.",
+            "Send a voice message via WhatsApp. Must specify account if multiple are connected.",
           inputSchema: {
             type: "object",
             properties: {
@@ -471,6 +587,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
                 type: "string",
                 description: "Absolute path to the audio file",
               },
+              ...accountProp,
             },
             required: ["recipient", "media_path"],
           },
@@ -484,6 +601,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
             properties: {
               message_id: { type: "string", description: "Message ID" },
               chat_jid: { type: "string", description: "Chat JID" },
+              ...accountProp,
             },
             required: ["message_id", "chat_jid"],
           },

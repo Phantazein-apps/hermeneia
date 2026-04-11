@@ -35,6 +35,7 @@ export interface MessageDict {
   chat_jid: string;
   chat_name: string | null;
   media_type: string | null;
+  account_id?: string;
 }
 
 export interface ChatDict {
@@ -45,12 +46,22 @@ export interface ChatDict {
   last_message: string | null;
   last_sender: string | null;
   last_is_from_me: boolean | null;
+  account_id?: string;
 }
 
 export interface ContactDict {
   phone_number: string;
   name: string | null;
   jid: string;
+  account_id?: string;
+}
+
+export interface AccountInfo {
+  id: string;
+  name: string | null;
+  phone: string | null;
+  connected: boolean;
+  authenticated: boolean;
 }
 
 export interface MessageContext {

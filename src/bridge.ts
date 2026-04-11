@@ -27,18 +27,42 @@ function getBinaryName(): string {
 export class WhatsAppBridge extends EventEmitter {
   private proc: ChildProcess | null = null;
   private dataDir: string;
+  private _accountId: string;
   private _connected = false;
   private _authenticated = false;
   private _currentQR: string | null = null;
+  private _displayName: string | null = null;
+  private _phone: string | null = null;
   private pendingRequests = new Map<
     string,
     { resolve: (v: any) => void; reject: (e: Error) => void }
   >();
   private reqCounter = 0;
 
-  constructor(dataDir: string) {
+  constructor(dataDir: string, accountId = "default") {
     super();
     this.dataDir = dataDir;
+    this._accountId = accountId;
+  }
+
+  get accountId(): string {
+    return this._accountId;
+  }
+
+  get displayName(): string | null {
+    return this._displayName;
+  }
+
+  set displayName(name: string | null) {
+    this._displayName = name;
+  }
+
+  get phone(): string | null {
+    return this._phone;
+  }
+
+  set phone(phone: string | null) {
+    this._phone = phone;
   }
 
   get status(): BridgeStatus {
@@ -148,8 +172,21 @@ export class WhatsAppBridge extends EventEmitter {
         this._connected = true;
         this._authenticated = true;
         this._currentQR = null;
+        // Extract phone/name from connected event if provided
+        if (evt.jid) {
+          this._phone = evt.jid.split("@")[0] ?? null;
+        }
+        if (evt.push_name) {
+          this._displayName = evt.push_name;
+        }
         this.emit("connected");
-        log("Connected to WhatsApp!");
+        log(`Connected to WhatsApp! (account: ${this._accountId})`);
+        break;
+
+      case "account_info":
+        if (evt.phone) this._phone = evt.phone;
+        if (evt.name) this._displayName = evt.name;
+        this.emit("account_info", { phone: this._phone, name: this._displayName });
         break;
 
       case "logged_out":
@@ -171,11 +208,12 @@ export class WhatsAppBridge extends EventEmitter {
         const pushName = evt.push_name ?? null;
 
         // Update chat
-        upsertChat(chatJid, null, timestamp);
+        upsertChat(this._accountId, chatJid, null, timestamp);
 
         // Store message
         if (content || mediaType) {
           storeMessage(
+            this._accountId,
             messageId,
             chatJid,
             sender,
@@ -201,11 +239,11 @@ export class WhatsAppBridge extends EventEmitter {
       }
 
       case "chat":
-        upsertChat(evt.jid, evt.name || null, evt.last_message_time);
+        upsertChat(this._accountId, evt.jid, evt.name || null, evt.last_message_time);
         break;
 
       case "contact":
-        upsertContact({
+        upsertContact(this._accountId, {
           id: evt.id,
           lid: evt.lid || null,
           phoneJid: evt.phone_jid || null,

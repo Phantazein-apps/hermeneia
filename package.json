@@ -1,6 +1,6 @@
 {
   "name": "hermeneia",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "WhatsApp bridge for Claude — drag, scan, chat. Zero dependencies.",
   "author": "Phantazein S.L.",
   "license": "MIT",

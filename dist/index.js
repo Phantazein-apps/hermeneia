@@ -4328,11 +4328,11 @@ var require_core = __commonJS({
     Ajv2.ValidationError = validation_error_1.default;
     Ajv2.MissingRefError = ref_error_1.default;
     exports.default = Ajv2;
-    function checkOptions(checkOpts, options, msg, log4 = "error") {
+    function checkOptions(checkOpts, options, msg, log5 = "error") {
       for (const key in checkOpts) {
         const opt = key;
         if (opt in options)
-          this.logger[log4](`${msg}: option ${key}. ${checkOpts[opt]}`);
+          this.logger[log5](`${msg}: option ${key}. ${checkOpts[opt]}`);
       }
     }
     function getSchEnv(keyRef) {
@@ -9729,7 +9729,7 @@ var require_galois_field = __commonJS({
         EXP_TABLE[i] = EXP_TABLE[i - 255];
       }
     })();
-    exports.log = function log4(n) {
+    exports.log = function log5(n) {
       if (n < 1) throw new Error("log(" + n + ")");
       return LOG_TABLE[n];
     };
@@ -28114,8 +28114,12 @@ var StdioServerTransport = class {
 };
 
 // src/index.ts
-import { join as join4, dirname as dirname3 } from "path";
+import { join as join5, dirname as dirname3 } from "path";
 import { fileURLToPath as fileURLToPath4 } from "url";
+
+// src/bridge-manager.ts
+import { mkdirSync as mkdirSync2, existsSync as existsSync3, readFileSync as readFileSync2, writeFileSync as writeFileSync2, renameSync, cpSync } from "fs";
+import { join as join4 } from "path";
 
 // src/bridge.ts
 import { spawn } from "child_process";
@@ -28166,35 +28170,40 @@ async function initStore(dataDir2) {
   db.run("PRAGMA foreign_keys = ON;");
   db.run(`
     CREATE TABLE IF NOT EXISTS chats (
-      jid TEXT PRIMARY KEY,
+      jid TEXT,
+      account_id TEXT NOT NULL DEFAULT 'default',
       name TEXT,
-      last_message_time TEXT
+      last_message_time TEXT,
+      PRIMARY KEY (jid, account_id)
     )
   `);
   db.run(`
     CREATE TABLE IF NOT EXISTS contacts (
-      id TEXT PRIMARY KEY,
+      id TEXT,
+      account_id TEXT NOT NULL DEFAULT 'default',
       lid TEXT,
       phone_jid TEXT,
       name TEXT,
       notify TEXT,
-      verified_name TEXT
+      verified_name TEXT,
+      PRIMARY KEY (id, account_id)
     )
   `);
   db.run("CREATE INDEX IF NOT EXISTS idx_contacts_lid ON contacts(lid)");
   db.run("CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone_jid)");
+  db.run("CREATE INDEX IF NOT EXISTS idx_contacts_account ON contacts(account_id)");
   db.run(`
     CREATE TABLE IF NOT EXISTS messages (
       id TEXT,
       chat_jid TEXT,
+      account_id TEXT NOT NULL DEFAULT 'default',
       sender TEXT,
       content TEXT,
       timestamp TEXT,
       is_from_me INTEGER,
       media_type TEXT,
       filename TEXT,
-      PRIMARY KEY (id, chat_jid),
-      FOREIGN KEY (chat_jid) REFERENCES chats(jid)
+      PRIMARY KEY (id, chat_jid, account_id)
     )
   `);
   db.run(
@@ -28206,86 +28215,140 @@ async function initStore(dataDir2) {
   db.run(
     "CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender)"
   );
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_messages_account ON messages(account_id)"
+  );
+  migrateAddAccountId();
   process.on("exit", flush);
   process.on("SIGINT", () => {
     flush();
     process.exit(0);
   });
 }
-function upsertContact(opts) {
+function migrateAddAccountId() {
+  try {
+    const cols = queryAll("PRAGMA table_info(chats)");
+    const hasAccountId = cols.some((c) => c.name === "account_id");
+    if (hasAccountId) return;
+    db.run("BEGIN TRANSACTION");
+    db.run("ALTER TABLE chats RENAME TO chats_old");
+    db.run(`CREATE TABLE chats (
+      jid TEXT, account_id TEXT NOT NULL DEFAULT 'default',
+      name TEXT, last_message_time TEXT,
+      PRIMARY KEY (jid, account_id)
+    )`);
+    db.run("INSERT INTO chats (jid, account_id, name, last_message_time) SELECT jid, 'default', name, last_message_time FROM chats_old");
+    db.run("DROP TABLE chats_old");
+    db.run("ALTER TABLE contacts RENAME TO contacts_old");
+    db.run(`CREATE TABLE contacts (
+      id TEXT, account_id TEXT NOT NULL DEFAULT 'default',
+      lid TEXT, phone_jid TEXT, name TEXT, notify TEXT, verified_name TEXT,
+      PRIMARY KEY (id, account_id)
+    )`);
+    db.run("INSERT INTO contacts (id, account_id, lid, phone_jid, name, notify, verified_name) SELECT id, 'default', lid, phone_jid, name, notify, verified_name FROM contacts_old");
+    db.run("DROP TABLE contacts_old");
+    db.run("ALTER TABLE messages RENAME TO messages_old");
+    db.run(`CREATE TABLE messages (
+      id TEXT, chat_jid TEXT, account_id TEXT NOT NULL DEFAULT 'default',
+      sender TEXT, content TEXT, timestamp TEXT, is_from_me INTEGER,
+      media_type TEXT, filename TEXT,
+      PRIMARY KEY (id, chat_jid, account_id)
+    )`);
+    db.run("INSERT INTO messages (id, chat_jid, account_id, sender, content, timestamp, is_from_me, media_type, filename) SELECT id, chat_jid, 'default', sender, content, timestamp, is_from_me, media_type, filename FROM messages_old");
+    db.run("DROP TABLE messages_old");
+    db.run("CREATE INDEX IF NOT EXISTS idx_contacts_lid ON contacts(lid)");
+    db.run("CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone_jid)");
+    db.run("CREATE INDEX IF NOT EXISTS idx_contacts_account ON contacts(account_id)");
+    db.run("CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)");
+    db.run("CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_jid)");
+    db.run("CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender)");
+    db.run("CREATE INDEX IF NOT EXISTS idx_messages_account ON messages(account_id)");
+    db.run("COMMIT");
+    console.error("[hermeneia] Migrated database schema to multi-account format");
+    flush();
+  } catch (err) {
+    try {
+      db.run("ROLLBACK");
+    } catch {
+    }
+    console.error("[hermeneia] Migration error:", err);
+  }
+}
+function upsertContact(accountId, opts) {
   db.run(
-    `INSERT INTO contacts (id, lid, phone_jid, name, notify, verified_name)
-     VALUES (?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET
+    `INSERT INTO contacts (id, account_id, lid, phone_jid, name, notify, verified_name)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id, account_id) DO UPDATE SET
        lid = COALESCE(excluded.lid, contacts.lid),
        phone_jid = COALESCE(excluded.phone_jid, contacts.phone_jid),
        name = COALESCE(excluded.name, contacts.name),
        notify = COALESCE(excluded.notify, contacts.notify),
        verified_name = COALESCE(excluded.verified_name, contacts.verified_name)`,
-    [opts.id, opts.lid ?? null, opts.phoneJid ?? null, opts.name ?? null, opts.notify ?? null, opts.verifiedName ?? null]
+    [opts.id, accountId, opts.lid ?? null, opts.phoneJid ?? null, opts.name ?? null, opts.notify ?? null, opts.verifiedName ?? null]
   );
   maybeFlush();
   const displayName = opts.name ?? opts.notify ?? opts.verifiedName ?? null;
   if (displayName) {
-    upsertChat(opts.id, displayName, (/* @__PURE__ */ new Date(0)).toISOString());
-    if (opts.lid) upsertChat(opts.lid, displayName, (/* @__PURE__ */ new Date(0)).toISOString());
-    if (opts.phoneJid) upsertChat(opts.phoneJid, displayName, (/* @__PURE__ */ new Date(0)).toISOString());
+    upsertChat(accountId, opts.id, displayName, (/* @__PURE__ */ new Date(0)).toISOString());
+    if (opts.lid) upsertChat(accountId, opts.lid, displayName, (/* @__PURE__ */ new Date(0)).toISOString());
+    if (opts.phoneJid) upsertChat(accountId, opts.phoneJid, displayName, (/* @__PURE__ */ new Date(0)).toISOString());
   }
 }
-function getStoreDiagnostics() {
-  const chatCount = queryOne("SELECT COUNT(*) as n FROM chats");
-  const chatWithName = queryOne("SELECT COUNT(*) as n FROM chats WHERE name IS NOT NULL AND name != ''");
-  const contactCount = queryOne("SELECT COUNT(*) as n FROM contacts");
-  const contactWithName = queryOne("SELECT COUNT(*) as n FROM contacts WHERE name IS NOT NULL OR notify IS NOT NULL OR verified_name IS NOT NULL");
-  const msgCount = queryOne("SELECT COUNT(*) as n FROM messages");
-  const sampleContacts = queryAll("SELECT * FROM contacts LIMIT 5");
-  const sampleChats = queryAll("SELECT jid, name FROM chats LIMIT 5");
+function getStoreDiagnostics(accountId) {
+  const acFilter = accountId ? " WHERE account_id = ?" : "";
+  const acParams = accountId ? [accountId] : [];
+  const chatCount = queryOne(`SELECT COUNT(*) as n FROM chats${acFilter}`, acParams);
+  const chatWithName = queryOne(`SELECT COUNT(*) as n FROM chats WHERE name IS NOT NULL AND name != ''${accountId ? " AND account_id = ?" : ""}`, acParams);
+  const contactCount = queryOne(`SELECT COUNT(*) as n FROM contacts${acFilter}`, acParams);
+  const contactWithName = queryOne(`SELECT COUNT(*) as n FROM contacts WHERE (name IS NOT NULL OR notify IS NOT NULL OR verified_name IS NOT NULL)${accountId ? " AND account_id = ?" : ""}`, acParams);
+  const msgCount = queryOne(`SELECT COUNT(*) as n FROM messages${acFilter}`, acParams);
   return {
+    account_id: accountId ?? "all",
     chats: { total: chatCount?.n, withName: chatWithName?.n },
     contacts: { total: contactCount?.n, withName: contactWithName?.n },
-    messages: { total: msgCount?.n },
-    sampleContacts,
-    sampleChats
+    messages: { total: msgCount?.n }
   };
 }
-function resolveContactName(jid) {
+function resolveContactName(jid, accountId) {
+  const acFilter = accountId ? " AND account_id = ?" : "";
+  const acParams = accountId ? [accountId] : [];
   const direct = queryOne(
-    "SELECT name, notify, verified_name FROM contacts WHERE id = ?",
-    [jid]
+    `SELECT name, notify, verified_name FROM contacts WHERE id = ?${acFilter}`,
+    [jid, ...acParams]
   );
   if (direct) {
     const n = direct.name ?? direct.notify ?? direct.verified_name;
     if (n) return n;
   }
   const crossRef = queryOne(
-    "SELECT name, notify, verified_name FROM contacts WHERE lid = ? OR phone_jid = ?",
-    [jid, jid]
+    `SELECT name, notify, verified_name FROM contacts WHERE (lid = ? OR phone_jid = ?)${acFilter}`,
+    [jid, jid, ...acParams]
   );
   if (crossRef) {
     const n = crossRef.name ?? crossRef.notify ?? crossRef.verified_name;
     if (n) return n;
   }
-  const chat = queryOne("SELECT name FROM chats WHERE jid = ?", [jid]);
+  const chat = queryOne(`SELECT name FROM chats WHERE jid = ?${acFilter}`, [jid, ...acParams]);
   if (chat?.name) return chat.name;
   return null;
 }
-function upsertChat(jid, name, lastMessageTime) {
+function upsertChat(accountId, jid, name, lastMessageTime) {
   db.run(
-    `INSERT INTO chats (jid, name, last_message_time)
-     VALUES (?, ?, ?)
-     ON CONFLICT(jid) DO UPDATE SET
+    `INSERT INTO chats (jid, account_id, name, last_message_time)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(jid, account_id) DO UPDATE SET
        name = COALESCE(excluded.name, chats.name),
        last_message_time = MAX(excluded.last_message_time, chats.last_message_time)`,
-    [jid, name, lastMessageTime]
+    [jid, accountId, name, lastMessageTime]
   );
   maybeFlush();
 }
-function storeMessage(id, chatJid, sender, content, timestamp, isFromMe, mediaType, filename) {
+function storeMessage(accountId, id, chatJid, sender, content, timestamp, isFromMe, mediaType, filename) {
   db.run(
     `INSERT OR IGNORE INTO messages
-       (id, chat_jid, sender, content, timestamp, is_from_me, media_type, filename)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, chatJid, sender, content, timestamp, isFromMe ? 1 : 0, mediaType, filename]
+       (id, chat_jid, account_id, sender, content, timestamp, is_from_me, media_type, filename)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, chatJid, accountId, sender, content, timestamp, isFromMe ? 1 : 0, mediaType, filename]
   );
   maybeFlush();
 }
@@ -28303,10 +28366,10 @@ function queryOne(sql, params = []) {
   const rows = queryAll(sql, params);
   return rows.length > 0 ? rows[0] : null;
 }
-function getSenderName(senderJid) {
-  return resolveContactName(senderJid) ?? senderJid;
+function getSenderName(senderJid, accountId) {
+  return resolveContactName(senderJid, accountId) ?? senderJid;
 }
-function toMessageDict(row, includeSenderName = true) {
+function toMessageDict(row, includeSenderName = true, accountId) {
   const senderPhone = row.sender?.split("@")[0] ?? row.sender;
   let senderName = null;
   let senderDisplay = null;
@@ -28315,7 +28378,7 @@ function toMessageDict(row, includeSenderName = true) {
       senderName = "Me";
       senderDisplay = "Me";
     } else {
-      const resolved = getSenderName(row.sender);
+      const resolved = getSenderName(row.sender, accountId ?? row.account_id);
       if (resolved && resolved !== row.sender && resolved !== senderPhone) {
         senderName = resolved;
         senderDisplay = `${resolved} (${senderPhone})`;
@@ -28325,7 +28388,7 @@ function toMessageDict(row, includeSenderName = true) {
       }
     }
   }
-  return {
+  const dict = {
     id: row.id,
     timestamp: row.timestamp,
     sender_jid: row.sender,
@@ -28338,6 +28401,8 @@ function toMessageDict(row, includeSenderName = true) {
     chat_name: row.chat_name ?? null,
     media_type: row.media_type ?? null
   };
+  if (row.account_id) dict.account_id = row.account_id;
+  return dict;
 }
 function listMessages(opts) {
   const limit = Math.min(opts.limit ?? 50, 500);
@@ -28346,6 +28411,10 @@ function listMessages(opts) {
   const order = opts.sortBy === "oldest" ? "ASC" : "DESC";
   const where = [];
   const params = [];
+  if (opts.accountId) {
+    where.push("m.account_id = ?");
+    params.push(opts.accountId);
+  }
   if (opts.after) {
     where.push("m.timestamp > ?");
     params.push(opts.after);
@@ -28368,10 +28437,10 @@ function listMessages(opts) {
   }
   const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
   const sql = `
-    SELECT m.id, m.chat_jid, m.sender, m.content, m.timestamp,
+    SELECT m.id, m.chat_jid, m.account_id, m.sender, m.content, m.timestamp,
            m.is_from_me, m.media_type, m.filename, c.name AS chat_name
     FROM messages m
-    JOIN chats c ON m.chat_jid = c.jid
+    JOIN chats c ON m.chat_jid = c.jid AND m.account_id = c.account_id
     ${whereClause}
     ORDER BY m.timestamp ${order}
     LIMIT ? OFFSET ?
@@ -28379,30 +28448,32 @@ function listMessages(opts) {
   params.push(limit, offset);
   return queryAll(sql, params).map((r) => toMessageDict(r));
 }
-function getMessageContext(messageId, before = 5, after = 5) {
+function getMessageContext(messageId, before = 5, after = 5, accountId) {
+  const acFilter = accountId ? " AND m.account_id = ?" : "";
+  const acParams = accountId ? [accountId] : [];
   const msg = queryOne(
-    `SELECT m.id, m.chat_jid, m.sender, m.content, m.timestamp,
+    `SELECT m.id, m.chat_jid, m.account_id, m.sender, m.content, m.timestamp,
             m.is_from_me, m.media_type, m.filename, c.name AS chat_name
-     FROM messages m JOIN chats c ON m.chat_jid = c.jid
-     WHERE m.id = ?`,
-    [messageId]
+     FROM messages m JOIN chats c ON m.chat_jid = c.jid AND m.account_id = c.account_id
+     WHERE m.id = ?${acFilter}`,
+    [messageId, ...acParams]
   );
   if (!msg) return null;
   const beforeRows = queryAll(
-    `SELECT m.id, m.chat_jid, m.sender, m.content, m.timestamp,
+    `SELECT m.id, m.chat_jid, m.account_id, m.sender, m.content, m.timestamp,
             m.is_from_me, m.media_type, m.filename, c.name AS chat_name
-     FROM messages m JOIN chats c ON m.chat_jid = c.jid
-     WHERE m.chat_jid = ? AND m.timestamp < ?
+     FROM messages m JOIN chats c ON m.chat_jid = c.jid AND m.account_id = c.account_id
+     WHERE m.chat_jid = ? AND m.account_id = ? AND m.timestamp < ?
      ORDER BY m.timestamp DESC LIMIT ?`,
-    [msg.chat_jid, msg.timestamp, before]
+    [msg.chat_jid, msg.account_id, msg.timestamp, before]
   );
   const afterRows = queryAll(
-    `SELECT m.id, m.chat_jid, m.sender, m.content, m.timestamp,
+    `SELECT m.id, m.chat_jid, m.account_id, m.sender, m.content, m.timestamp,
             m.is_from_me, m.media_type, m.filename, c.name AS chat_name
-     FROM messages m JOIN chats c ON m.chat_jid = c.jid
-     WHERE m.chat_jid = ? AND m.timestamp > ?
+     FROM messages m JOIN chats c ON m.chat_jid = c.jid AND m.account_id = c.account_id
+     WHERE m.chat_jid = ? AND m.account_id = ? AND m.timestamp > ?
      ORDER BY m.timestamp ASC LIMIT ?`,
-    [msg.chat_jid, msg.timestamp, after]
+    [msg.chat_jid, msg.account_id, msg.timestamp, after]
   );
   return {
     message: toMessageDict(msg),
@@ -28417,63 +28488,77 @@ function listChats(opts) {
   const orderBy = opts.sortBy === "name" ? "c.name" : "c.last_message_time DESC";
   const where = [];
   const params = [];
+  if (opts.accountId) {
+    where.push("c.account_id = ?");
+    params.push(opts.accountId);
+  }
   if (opts.query) {
     where.push("(LOWER(c.name) LIKE LOWER(?) OR c.jid LIKE ?)");
     params.push(`%${opts.query}%`, `%${opts.query}%`);
   }
   const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
   const incLast = opts.includeLastMessage !== false;
-  const joinClause = incLast ? "LEFT JOIN messages m ON c.jid = m.chat_jid AND c.last_message_time = m.timestamp" : "";
+  const joinClause = incLast ? "LEFT JOIN messages m ON c.jid = m.chat_jid AND c.account_id = m.account_id AND c.last_message_time = m.timestamp" : "";
   const selectLast = incLast ? "m.content AS last_message, m.sender AS last_sender, m.is_from_me AS last_is_from_me" : "NULL AS last_message, NULL AS last_sender, NULL AS last_is_from_me";
   const sql = `
-    SELECT c.jid, c.name, c.last_message_time, ${selectLast}
+    SELECT c.jid, c.account_id, c.name, c.last_message_time, ${selectLast}
     FROM chats c ${joinClause}
     ${whereClause}
     ORDER BY ${orderBy}
     LIMIT ? OFFSET ?
   `;
   params.push(limit, offset);
-  return queryAll(sql, params).map((r) => ({
-    jid: r.jid,
-    name: r.name || resolveContactName(r.jid) || r.jid.split("@")[0],
-    is_group: r.jid.endsWith("@g.us"),
-    last_message_time: r.last_message_time,
-    last_message: r.last_message,
-    last_sender: r.last_sender,
-    last_is_from_me: r.last_is_from_me != null ? !!r.last_is_from_me : null
-  }));
+  return queryAll(sql, params).map((r) => {
+    const dict = {
+      jid: r.jid,
+      name: r.name || resolveContactName(r.jid, r.account_id) || r.jid.split("@")[0],
+      is_group: r.jid.endsWith("@g.us"),
+      last_message_time: r.last_message_time,
+      last_message: r.last_message,
+      last_sender: r.last_sender,
+      last_is_from_me: r.last_is_from_me != null ? !!r.last_is_from_me : null
+    };
+    if (r.account_id) dict.account_id = r.account_id;
+    return dict;
+  });
 }
-function getChat(chatJid, includeLastMessage = true) {
-  const joinClause = includeLastMessage ? "LEFT JOIN messages m ON c.jid = m.chat_jid AND c.last_message_time = m.timestamp" : "";
+function getChat(chatJid, includeLastMessage = true, accountId) {
+  const acFilter = accountId ? " AND c.account_id = ?" : "";
+  const acParams = accountId ? [accountId] : [];
+  const joinClause = includeLastMessage ? "LEFT JOIN messages m ON c.jid = m.chat_jid AND c.account_id = m.account_id AND c.last_message_time = m.timestamp" : "";
   const selectLast = includeLastMessage ? "m.content AS last_message, m.sender AS last_sender, m.is_from_me AS last_is_from_me" : "NULL AS last_message, NULL AS last_sender, NULL AS last_is_from_me";
   const row = queryOne(
-    `SELECT c.jid, c.name, c.last_message_time, ${selectLast}
-     FROM chats c ${joinClause} WHERE c.jid = ?`,
-    [chatJid]
+    `SELECT c.jid, c.account_id, c.name, c.last_message_time, ${selectLast}
+     FROM chats c ${joinClause} WHERE c.jid = ?${acFilter}`,
+    [chatJid, ...acParams]
   );
   if (!row) return null;
-  return {
+  const dict = {
     jid: row.jid,
-    name: row.name || resolveContactName(row.jid) || row.jid.split("@")[0],
+    name: row.name || resolveContactName(row.jid, row.account_id) || row.jid.split("@")[0],
     is_group: row.jid.endsWith("@g.us"),
     last_message_time: row.last_message_time,
     last_message: row.last_message,
     last_sender: row.last_sender,
     last_is_from_me: row.last_is_from_me != null ? !!row.last_is_from_me : null
   };
+  if (row.account_id) dict.account_id = row.account_id;
+  return dict;
 }
-function getDirectChatByContact(phone) {
+function getDirectChatByContact(phone, accountId) {
+  const acFilter = accountId ? " AND c.account_id = ?" : "";
+  const acParams = accountId ? [accountId] : [];
   const row = queryOne(
-    `SELECT c.jid, c.name, c.last_message_time,
+    `SELECT c.jid, c.account_id, c.name, c.last_message_time,
             m.content AS last_message, m.sender AS last_sender, m.is_from_me AS last_is_from_me
      FROM chats c
-     LEFT JOIN messages m ON c.jid = m.chat_jid AND c.last_message_time = m.timestamp
-     WHERE c.jid LIKE ? AND c.jid NOT LIKE '%@g.us'
+     LEFT JOIN messages m ON c.jid = m.chat_jid AND c.account_id = m.account_id AND c.last_message_time = m.timestamp
+     WHERE c.jid LIKE ? AND c.jid NOT LIKE '%@g.us'${acFilter}
      LIMIT 1`,
-    [`%${phone}%`]
+    [`%${phone}%`, ...acParams]
   );
   if (!row) return null;
-  return {
+  const dict = {
     jid: row.jid,
     name: row.name,
     is_group: false,
@@ -28482,78 +28567,96 @@ function getDirectChatByContact(phone) {
     last_sender: row.last_sender,
     last_is_from_me: row.last_is_from_me != null ? !!row.last_is_from_me : null
   };
+  if (row.account_id) dict.account_id = row.account_id;
+  return dict;
 }
-function getContactChats(jid, limit = 20, page = 0) {
+function getContactChats(jid, limit = 20, page = 0, accountId) {
+  const acFilter = accountId ? " AND c.account_id = ?" : "";
+  const acParams = accountId ? [accountId] : [];
   return queryAll(
-    `SELECT DISTINCT c.jid, c.name, c.last_message_time,
+    `SELECT DISTINCT c.jid, c.account_id, c.name, c.last_message_time,
             m.content AS last_message, m.sender AS last_sender, m.is_from_me AS last_is_from_me
      FROM chats c
-     JOIN messages m ON c.jid = m.chat_jid
-     WHERE m.sender = ? OR c.jid = ?
+     JOIN messages m ON c.jid = m.chat_jid AND c.account_id = m.account_id
+     WHERE (m.sender = ? OR c.jid = ?)${acFilter}
      ORDER BY c.last_message_time DESC
      LIMIT ? OFFSET ?`,
-    [jid, jid, limit, page * limit]
-  ).map((r) => ({
-    jid: r.jid,
-    name: r.name,
-    is_group: r.jid.endsWith("@g.us"),
-    last_message_time: r.last_message_time,
-    last_message: r.last_message,
-    last_sender: r.last_sender,
-    last_is_from_me: r.last_is_from_me != null ? !!r.last_is_from_me : null
-  }));
+    [jid, jid, ...acParams, limit, page * limit]
+  ).map((r) => {
+    const dict = {
+      jid: r.jid,
+      name: r.name,
+      is_group: r.jid.endsWith("@g.us"),
+      last_message_time: r.last_message_time,
+      last_message: r.last_message,
+      last_sender: r.last_sender,
+      last_is_from_me: r.last_is_from_me != null ? !!r.last_is_from_me : null
+    };
+    if (r.account_id) dict.account_id = r.account_id;
+    return dict;
+  });
 }
-function getLastInteraction(jid) {
+function getLastInteraction(jid, accountId) {
+  const acFilter = accountId ? " AND m.account_id = ?" : "";
+  const acParams = accountId ? [accountId] : [];
   const row = queryOne(
-    `SELECT m.id, m.chat_jid, m.sender, m.content, m.timestamp,
+    `SELECT m.id, m.chat_jid, m.account_id, m.sender, m.content, m.timestamp,
             m.is_from_me, m.media_type, m.filename, c.name AS chat_name
-     FROM messages m JOIN chats c ON m.chat_jid = c.jid
-     WHERE m.sender = ? OR c.jid = ?
+     FROM messages m JOIN chats c ON m.chat_jid = c.jid AND m.account_id = c.account_id
+     WHERE (m.sender = ? OR c.jid = ?)${acFilter}
      ORDER BY m.timestamp DESC LIMIT 1`,
-    [jid, jid]
+    [jid, jid, ...acParams]
   );
   return row ? toMessageDict(row) : null;
 }
-function searchContacts(query) {
+function searchContacts(query, accountId) {
   const pattern = `%${query}%`;
+  const acFilter = accountId ? " AND account_id = ?" : "";
+  const acParams = accountId ? [accountId] : [];
   const fromContacts = queryAll(
-    `SELECT id, lid, phone_jid, name, notify, verified_name FROM contacts
-     WHERE LOWER(COALESCE(name, '')) LIKE LOWER(?)
+    `SELECT id, account_id, lid, phone_jid, name, notify, verified_name FROM contacts
+     WHERE (LOWER(COALESCE(name, '')) LIKE LOWER(?)
         OR LOWER(COALESCE(notify, '')) LIKE LOWER(?)
         OR LOWER(COALESCE(verified_name, '')) LIKE LOWER(?)
         OR LOWER(id) LIKE LOWER(?)
-        OR LOWER(COALESCE(phone_jid, '')) LIKE LOWER(?)
+        OR LOWER(COALESCE(phone_jid, '')) LIKE LOWER(?))${acFilter}
      LIMIT 50`,
-    [pattern, pattern, pattern, pattern, pattern]
+    [pattern, pattern, pattern, pattern, pattern, ...acParams]
   );
   const fromChats = queryAll(
-    `SELECT DISTINCT jid, name FROM chats
+    `SELECT DISTINCT jid, account_id, name FROM chats
      WHERE (LOWER(name) LIKE LOWER(?) OR LOWER(jid) LIKE LOWER(?))
-       AND jid NOT LIKE '%@g.us'
+       AND jid NOT LIKE '%@g.us'${acFilter}
      ORDER BY name, jid
      LIMIT 50`,
-    [pattern, pattern]
+    [pattern, pattern, ...acParams]
   );
   const seen = /* @__PURE__ */ new Set();
   const results = [];
   for (const r of fromContacts) {
     const jid = r.phone_jid ?? r.id;
-    if (seen.has(jid)) continue;
-    seen.add(jid);
-    results.push({
+    const key = `${jid}:${r.account_id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const dict = {
       phone_number: (r.phone_jid ?? r.id).split("@")[0],
       name: r.name ?? r.notify ?? r.verified_name ?? null,
       jid: r.phone_jid ?? r.id
-    });
+    };
+    if (r.account_id) dict.account_id = r.account_id;
+    results.push(dict);
   }
   for (const r of fromChats) {
-    if (seen.has(r.jid)) continue;
-    seen.add(r.jid);
-    results.push({
+    const key = `${r.jid}:${r.account_id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const dict = {
       phone_number: r.jid.split("@")[0],
-      name: r.name ?? resolveContactName(r.jid) ?? null,
+      name: r.name ?? resolveContactName(r.jid, r.account_id) ?? null,
       jid: r.jid
-    });
+    };
+    if (r.account_id) dict.account_id = r.account_id;
+    results.push(dict);
   }
   return results;
 }
@@ -28570,14 +28673,33 @@ function getBinaryName() {
 var WhatsAppBridge = class extends EventEmitter {
   proc = null;
   dataDir;
+  _accountId;
   _connected = false;
   _authenticated = false;
   _currentQR = null;
+  _displayName = null;
+  _phone = null;
   pendingRequests = /* @__PURE__ */ new Map();
   reqCounter = 0;
-  constructor(dataDir2) {
+  constructor(dataDir2, accountId = "default") {
     super();
     this.dataDir = dataDir2;
+    this._accountId = accountId;
+  }
+  get accountId() {
+    return this._accountId;
+  }
+  get displayName() {
+    return this._displayName;
+  }
+  set displayName(name) {
+    this._displayName = name;
+  }
+  get phone() {
+    return this._phone;
+  }
+  set phone(phone) {
+    this._phone = phone;
   }
   get status() {
     return {
@@ -28667,8 +28789,19 @@ var WhatsAppBridge = class extends EventEmitter {
         this._connected = true;
         this._authenticated = true;
         this._currentQR = null;
+        if (evt.jid) {
+          this._phone = evt.jid.split("@")[0] ?? null;
+        }
+        if (evt.push_name) {
+          this._displayName = evt.push_name;
+        }
         this.emit("connected");
-        log("Connected to WhatsApp!");
+        log(`Connected to WhatsApp! (account: ${this._accountId})`);
+        break;
+      case "account_info":
+        if (evt.phone) this._phone = evt.phone;
+        if (evt.name) this._displayName = evt.name;
+        this.emit("account_info", { phone: this._phone, name: this._displayName });
         break;
       case "logged_out":
         this._connected = false;
@@ -28686,9 +28819,10 @@ var WhatsAppBridge = class extends EventEmitter {
         const mediaType = evt.media_type ?? null;
         const messageId = evt.id;
         const pushName = evt.push_name ?? null;
-        upsertChat(chatJid, null, timestamp);
+        upsertChat(this._accountId, chatJid, null, timestamp);
         if (content || mediaType) {
           storeMessage(
+            this._accountId,
             messageId,
             chatJid,
             sender,
@@ -28712,10 +28846,10 @@ var WhatsAppBridge = class extends EventEmitter {
         break;
       }
       case "chat":
-        upsertChat(evt.jid, evt.name || null, evt.last_message_time);
+        upsertChat(this._accountId, evt.jid, evt.name || null, evt.last_message_time);
         break;
       case "contact":
-        upsertContact({
+        upsertContact(this._accountId, {
           id: evt.id,
           lid: evt.lid || null,
           phoneJid: evt.phone_jid || null,
@@ -28795,436 +28929,6 @@ var WhatsAppBridge = class extends EventEmitter {
   }
 };
 
-// src/tools.ts
-function registerTools(server2, bridge) {
-  server2.setRequestHandler(
-    CallToolRequestSchema,
-    async (request) => {
-      const { name, arguments: args } = request.params;
-      switch (name) {
-        case "check_status": {
-          const status = bridge.status;
-          if (status.connected && status.authenticated) {
-            const diag = getStoreDiagnostics();
-            return json2({
-              status: "connected",
-              message: "WhatsApp is connected and ready.",
-              store: diag
-            });
-          }
-          if (status.qr_url) {
-            return text(
-              `WhatsApp is not connected. Please scan the QR code to authenticate:
-
-Open this URL in your browser: ${status.qr_url}
-
-Then scan the QR code with WhatsApp on your phone:
-Settings > Linked Devices > Link a Device`
-            );
-          }
-          return text(
-            "WhatsApp is disconnected. The bridge is attempting to reconnect..."
-          );
-        }
-        // ── Contact tools ───────────────────────────────────────────
-        case "search_contacts": {
-          const query = args?.query;
-          if (!query) return text("Missing required argument: query");
-          return json2(searchContacts(query));
-        }
-        case "get_contact": {
-          const identifier = args?.identifier ?? args?.phone_number ?? args?.phone;
-          if (!identifier) return text("Missing required argument: identifier");
-          const cleaned = identifier.trim();
-          if (!cleaned) return text("Identifier must be non-empty");
-          let jid;
-          let isLid = false;
-          if (cleaned.includes("@")) {
-            jid = cleaned;
-            isLid = jid.endsWith("@lid");
-          } else {
-            const digits = cleaned.replace(/\D/g, "");
-            if (digits.length > 15) {
-              jid = `${digits}@lid`;
-              isLid = true;
-            } else {
-              jid = `${digits}@s.whatsapp.net`;
-            }
-          }
-          const jidUser = jid.split("@")[0];
-          const chat = getChat(jid, false);
-          let displayName = null;
-          let resolved = false;
-          if (chat?.name) {
-            displayName = chat.name;
-            resolved = displayName !== jid && displayName !== jidUser;
-          } else {
-            displayName = getSenderName(jid);
-            resolved = displayName !== jid && displayName !== jidUser && displayName !== identifier;
-          }
-          return json2({
-            identifier,
-            jid,
-            phone_number: isLid ? null : jidUser,
-            lid: isLid ? jidUser : null,
-            name: resolved ? displayName : jidUser,
-            display_name: displayName,
-            is_lid: isLid,
-            resolved
-          });
-        }
-        // ── Message tools ───────────────────────────────────────────
-        case "list_messages": {
-          return json2(
-            listMessages({
-              after: args?.after,
-              before: args?.before,
-              senderPhoneNumber: args?.sender_phone_number,
-              chatJid: args?.chat_jid,
-              query: args?.query,
-              limit: args?.limit,
-              page: args?.page,
-              sortBy: args?.sort_by
-            })
-          );
-        }
-        case "get_message_context": {
-          const messageId = args?.message_id;
-          if (!messageId) return text("Missing required argument: message_id");
-          const result = getMessageContext(
-            messageId,
-            args?.before ?? 5,
-            args?.after ?? 5
-          );
-          return result ? json2(result) : text(`Message ${messageId} not found`);
-        }
-        case "send_message": {
-          const recipient = args?.recipient;
-          const message = args?.message;
-          if (!recipient) return text("Missing required argument: recipient");
-          if (!message) return text("Missing required argument: message");
-          const result = await bridge.sendMessage(recipient, message);
-          return json2(result);
-        }
-        // ── Chat tools ──────────────────────────────────────────────
-        case "list_chats": {
-          return json2(
-            listChats({
-              query: args?.query,
-              limit: args?.limit,
-              page: args?.page,
-              includeLastMessage: args?.include_last_message,
-              sortBy: args?.sort_by
-            })
-          );
-        }
-        case "get_chat": {
-          const chatJid = args?.chat_jid;
-          if (!chatJid) return text("Missing required argument: chat_jid");
-          const chat = getChat(
-            chatJid,
-            args?.include_last_message ?? true
-          );
-          return chat ? json2(chat) : text(`Chat ${chatJid} not found`);
-        }
-        case "get_direct_chat_by_contact": {
-          const phone = args?.sender_phone_number;
-          if (!phone)
-            return text("Missing required argument: sender_phone_number");
-          const chat = getDirectChatByContact(phone);
-          return chat ? json2(chat) : text(`No direct chat found for ${phone}`);
-        }
-        case "get_contact_chats": {
-          const jid = args?.jid;
-          if (!jid) return text("Missing required argument: jid");
-          return json2(
-            getContactChats(
-              jid,
-              args?.limit ?? 20,
-              args?.page ?? 0
-            )
-          );
-        }
-        case "get_last_interaction": {
-          const jid = args?.jid;
-          if (!jid) return text("Missing required argument: jid");
-          const msg = getLastInteraction(jid);
-          return msg ? json2(msg) : text(`No messages found for ${jid}`);
-        }
-        // ── Media tools ─────────────────────────────────────────────
-        case "send_file": {
-          const recipient = args?.recipient;
-          const mediaPath = args?.media_path;
-          if (!recipient) return text("Missing required argument: recipient");
-          if (!mediaPath) return text("Missing required argument: media_path");
-          const result = await bridge.sendFile(recipient, mediaPath);
-          return json2(result);
-        }
-        case "send_audio_message": {
-          const recipient = args?.recipient;
-          const mediaPath = args?.media_path;
-          if (!recipient) return text("Missing required argument: recipient");
-          if (!mediaPath) return text("Missing required argument: media_path");
-          const result = await bridge.sendFile(recipient, mediaPath);
-          return json2(result);
-        }
-        case "download_media": {
-          return text(
-            "Media download requires the original message object. This feature is coming in a future version."
-          );
-        }
-        default:
-          return text(`Unknown tool: ${name}`);
-      }
-    }
-  );
-  server2.setRequestHandler(
-    ListToolsRequestSchema,
-    async () => ({
-      tools: [
-        {
-          name: "check_status",
-          description: "Check WhatsApp connection status. If not connected, returns instructions to authenticate.",
-          inputSchema: { type: "object", properties: {} },
-          annotations: { readOnlyHint: true, openWorldHint: false }
-        },
-        {
-          name: "search_contacts",
-          description: "Search WhatsApp contacts by name or phone number.",
-          inputSchema: {
-            type: "object",
-            properties: {
-              query: {
-                type: "string",
-                description: "Search term to match against names or phones"
-              }
-            },
-            required: ["query"]
-          },
-          annotations: { readOnlyHint: true, openWorldHint: false }
-        },
-        {
-          name: "get_contact",
-          description: "Look up a WhatsApp contact by phone number, LID, or full JID.",
-          inputSchema: {
-            type: "object",
-            properties: {
-              identifier: {
-                type: "string",
-                description: 'Phone number, LID, or JID (e.g. "12025551234", "12025551234@s.whatsapp.net")'
-              }
-            },
-            required: ["identifier"]
-          },
-          annotations: { readOnlyHint: true, openWorldHint: false }
-        },
-        {
-          name: "list_messages",
-          description: "Get WhatsApp messages with filters, date ranges, and sorting.",
-          inputSchema: {
-            type: "object",
-            properties: {
-              after: {
-                type: "string",
-                description: "ISO-8601 date (e.g. 2026-01-01)"
-              },
-              before: {
-                type: "string",
-                description: "ISO-8601 date (e.g. 2026-01-09)"
-              },
-              sender_phone_number: {
-                type: "string",
-                description: "Filter by sender phone"
-              },
-              chat_jid: { type: "string", description: "Filter by chat JID" },
-              query: { type: "string", description: "Search term" },
-              limit: { type: "number", description: "Max results (default 50)" },
-              page: {
-                type: "number",
-                description: "Page number (default 0)"
-              },
-              sort_by: {
-                type: "string",
-                enum: ["newest", "oldest"],
-                description: "Sort order (default newest)"
-              }
-            }
-          },
-          annotations: { readOnlyHint: true, openWorldHint: false }
-        },
-        {
-          name: "get_message_context",
-          description: "Get messages around a specific message by ID.",
-          inputSchema: {
-            type: "object",
-            properties: {
-              message_id: { type: "string", description: "The message ID" },
-              before: {
-                type: "number",
-                description: "Messages before (default 5)"
-              },
-              after: {
-                type: "number",
-                description: "Messages after (default 5)"
-              }
-            },
-            required: ["message_id"]
-          },
-          annotations: { readOnlyHint: true, openWorldHint: false }
-        },
-        {
-          name: "send_message",
-          description: "Send a WhatsApp text message to a contact or group.",
-          inputSchema: {
-            type: "object",
-            properties: {
-              recipient: {
-                type: "string",
-                description: "Phone number (no + or symbols) or JID (e.g. 12025551234 or 123@g.us)"
-              },
-              message: { type: "string", description: "Message text" }
-            },
-            required: ["recipient", "message"]
-          },
-          annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true }
-        },
-        {
-          name: "list_chats",
-          description: "List WhatsApp chats with metadata.",
-          inputSchema: {
-            type: "object",
-            properties: {
-              query: { type: "string", description: "Filter by name or JID" },
-              limit: { type: "number", description: "Max results (default 50)" },
-              page: { type: "number", description: "Page (default 0)" },
-              include_last_message: {
-                type: "boolean",
-                description: "Include last message (default true)"
-              },
-              sort_by: {
-                type: "string",
-                enum: ["last_active", "name"],
-                description: "Sort order"
-              }
-            }
-          },
-          annotations: { readOnlyHint: true, openWorldHint: false }
-        },
-        {
-          name: "get_chat",
-          description: "Get a specific WhatsApp chat by JID.",
-          inputSchema: {
-            type: "object",
-            properties: {
-              chat_jid: { type: "string", description: "Chat JID" },
-              include_last_message: {
-                type: "boolean",
-                description: "Include last message (default true)"
-              }
-            },
-            required: ["chat_jid"]
-          },
-          annotations: { readOnlyHint: true, openWorldHint: false }
-        },
-        {
-          name: "get_direct_chat_by_contact",
-          description: "Find a direct message chat by phone number.",
-          inputSchema: {
-            type: "object",
-            properties: {
-              sender_phone_number: {
-                type: "string",
-                description: "Phone number"
-              }
-            },
-            required: ["sender_phone_number"]
-          },
-          annotations: { readOnlyHint: true, openWorldHint: false }
-        },
-        {
-          name: "get_contact_chats",
-          description: "List all chats involving a specific contact.",
-          inputSchema: {
-            type: "object",
-            properties: {
-              jid: { type: "string", description: "Contact JID" },
-              limit: { type: "number", description: "Max results (default 20)" },
-              page: { type: "number", description: "Page (default 0)" }
-            },
-            required: ["jid"]
-          },
-          annotations: { readOnlyHint: true, openWorldHint: false }
-        },
-        {
-          name: "get_last_interaction",
-          description: "Get the most recent message with a contact.",
-          inputSchema: {
-            type: "object",
-            properties: {
-              jid: { type: "string", description: "Contact JID" }
-            },
-            required: ["jid"]
-          },
-          annotations: { readOnlyHint: true, openWorldHint: false }
-        },
-        {
-          name: "send_file",
-          description: "Send an image, video, or document via WhatsApp.",
-          inputSchema: {
-            type: "object",
-            properties: {
-              recipient: { type: "string", description: "Phone or JID" },
-              media_path: {
-                type: "string",
-                description: "Absolute path to the file"
-              }
-            },
-            required: ["recipient", "media_path"]
-          },
-          annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true }
-        },
-        {
-          name: "send_audio_message",
-          description: "Send a voice message via WhatsApp.",
-          inputSchema: {
-            type: "object",
-            properties: {
-              recipient: { type: "string", description: "Phone or JID" },
-              media_path: {
-                type: "string",
-                description: "Absolute path to the audio file"
-              }
-            },
-            required: ["recipient", "media_path"]
-          },
-          annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true }
-        },
-        {
-          name: "download_media",
-          description: "Download media from a received WhatsApp message.",
-          inputSchema: {
-            type: "object",
-            properties: {
-              message_id: { type: "string", description: "Message ID" },
-              chat_jid: { type: "string", description: "Chat JID" }
-            },
-            required: ["message_id", "chat_jid"]
-          },
-          annotations: { readOnlyHint: true, openWorldHint: false }
-        }
-      ]
-    })
-  );
-}
-function text(content) {
-  return { content: [{ type: "text", text: content }] };
-}
-function json2(data) {
-  return {
-    content: [{ type: "text", text: JSON.stringify(data, null, 2) }]
-  };
-}
-
 // src/qr-server.ts
 var import_qrcode = __toESM(require_lib(), 1);
 import { createServer } from "http";
@@ -29232,14 +28936,25 @@ import { existsSync as existsSync2 } from "fs";
 import { join as join3 } from "path";
 var log2 = (msg) => console.error(`[hermeneia:qr] ${msg}`);
 var server = null;
-var currentQRDataUrl = null;
-var isAuthenticated = false;
+var sessions = /* @__PURE__ */ new Map();
+function getOrCreateSession(bridge, accountId) {
+  let session = sessions.get(accountId);
+  if (!session) {
+    session = { qrDataUrl: null, authenticated: false, bridge };
+    sessions.set(accountId, session);
+  }
+  return session;
+}
+function setupHtml(accountId) {
+  const title = accountId === "default" ? "Connect WhatsApp" : `Connect WhatsApp \u2014 ${accountId}`;
+  return SETUP_HTML.replace("{{TITLE}}", title).replace("{{ACCOUNT_ID}}", accountId);
+}
 var SETUP_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Hermeneia \u2014 Connect WhatsApp</title>
+  <title>Hermeneia \u2014 {{TITLE}}</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -29327,7 +29042,7 @@ var SETUP_HTML = `<!DOCTYPE html>
 <body>
   <div class="card">
     <h1>Hermeneia</h1>
-    <p class="subtitle">Connect your WhatsApp account to Claude</p>
+    <p class="subtitle">{{TITLE}}</p>
 
     <div id="qr-view">
       <div id="qr-container">
@@ -29353,9 +29068,10 @@ var SETUP_HTML = `<!DOCTYPE html>
   </div>
 
   <script>
+    const accountId = "{{ACCOUNT_ID}}";
     async function poll() {
       try {
-        const res = await fetch('/api/status');
+        const res = await fetch('/api/status/' + accountId);
         const data = await res.json();
         if (data.authenticated) {
           document.getElementById('qr-view').classList.add('waiting');
@@ -29375,66 +29091,99 @@ var SETUP_HTML = `<!DOCTYPE html>
   </script>
 </body>
 </html>`;
-async function applyQR(qrString) {
+async function applyQR(accountId, qrString) {
   try {
-    currentQRDataUrl = await import_qrcode.default.toDataURL(qrString, {
+    const dataUrl = await import_qrcode.default.toDataURL(qrString, {
       width: 256,
       margin: 0,
       color: { dark: "#000000", light: "#ffffff" }
     });
+    const session = sessions.get(accountId);
+    if (session) session.qrDataUrl = dataUrl;
   } catch (err) {
     log2(`QR generation error: ${err}`);
   }
 }
-function startQRServer(bridge, port = 3456, initialQr, dataDir2) {
-  if (server) {
-    if (initialQr) applyQR(initialQr);
-    return;
+function startQRServer(bridge, port = 3456, initialQr, dataDir2, accountId = "default") {
+  const session = getOrCreateSession(bridge, accountId);
+  if (initialQr) applyQR(accountId, initialQr);
+  if (!bridge._qrListenerAttached) {
+    bridge.on("qr", (qrString) => {
+      applyQR(accountId, qrString);
+    });
+    bridge.on("connected", () => {
+      session.authenticated = true;
+      setTimeout(() => {
+        sessions.delete(accountId);
+        if (sessions.size === 0) stopQRServer();
+      }, 3e4);
+    });
+    bridge._qrListenerAttached = true;
   }
-  if (initialQr) applyQR(initialQr);
-  bridge.on("qr", (qrString) => {
-    applyQR(qrString);
-  });
-  bridge.on("connected", () => {
-    isAuthenticated = true;
-    setTimeout(() => stopQRServer(), 3e4);
-  });
-  server = createServer((req, res) => {
-    if (req.url === "/setup" || req.url === "/") {
-      res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(SETUP_HTML);
-      return;
-    }
-    if (req.url === "/api/status") {
-      res.writeHead(200, {
-        "Content-Type": "application/json",
-        "Cache-Control": "no-cache"
-      });
-      res.end(
-        JSON.stringify({
-          authenticated: isAuthenticated,
-          qr_data_url: currentQRDataUrl
-        })
-      );
-      return;
-    }
-    res.writeHead(404);
-    res.end("Not found");
-  });
-  server.listen(port, () => {
-    log2(`Setup page: http://localhost:${port}/setup`);
-  });
+  if (!server) {
+    server = createServer((req, res) => {
+      const url2 = req.url ?? "/";
+      if (url2 === "/setup" || url2 === "/setup/" || url2 === "/") {
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(setupHtml("default"));
+        return;
+      }
+      const setupMatch = url2.match(/^\/setup\/([^/?]+)/);
+      if (setupMatch) {
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(setupHtml(setupMatch[1]));
+        return;
+      }
+      const statusMatch = url2.match(/^\/api\/status\/([^/?]+)/);
+      if (statusMatch) {
+        const id = statusMatch[1];
+        const s = sessions.get(id);
+        res.writeHead(200, {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-cache"
+        });
+        res.end(
+          JSON.stringify({
+            authenticated: s?.authenticated ?? false,
+            qr_data_url: s?.qrDataUrl ?? null
+          })
+        );
+        return;
+      }
+      if (url2 === "/api/status") {
+        const s = sessions.get("default");
+        res.writeHead(200, {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-cache"
+        });
+        res.end(
+          JSON.stringify({
+            authenticated: s?.authenticated ?? false,
+            qr_data_url: s?.qrDataUrl ?? null
+          })
+        );
+        return;
+      }
+      res.writeHead(404);
+      res.end("Not found");
+    });
+    server.listen(port, () => {
+      log2(`Setup page: http://localhost:${port}/setup`);
+    });
+  }
   const hasExistingAuth = dataDir2 && existsSync2(join3(dataDir2, "auth", "creds.json"));
   if (!hasExistingAuth) {
-    openBrowser(`http://localhost:${port}/setup`);
+    const setupUrl = accountId === "default" ? `http://localhost:${port}/setup` : `http://localhost:${port}/setup/${accountId}`;
+    openBrowser(setupUrl);
   } else {
-    log2("QR generated during reconnect \u2014 not auto-opening browser (auth exists)");
+    log2(`QR generated during reconnect for "${accountId}" \u2014 not auto-opening browser`);
   }
 }
 function stopQRServer() {
   if (server) {
     server.close();
     server = null;
+    sessions.clear();
     log2("QR server stopped");
   }
 }
@@ -29447,34 +29196,735 @@ async function openBrowser(url2) {
   }
 }
 
+// src/bridge-manager.ts
+var log3 = (msg) => console.error(`[hermeneia:manager] ${msg}`);
+var BridgeManager = class {
+  bridges = /* @__PURE__ */ new Map();
+  dataDir;
+  qrPort;
+  onMessage;
+  constructor(dataDir2, qrPort2) {
+    this.dataDir = dataDir2;
+    this.qrPort = qrPort2;
+  }
+  setMessageHandler(handler) {
+    this.onMessage = handler;
+  }
+  /** Migrate old flat data layout to accounts/ subdirectory */
+  migrateOldLayout() {
+    const oldWhatsmeow = join4(this.dataDir, "whatsmeow.db");
+    const accountsDir = join4(this.dataDir, "accounts");
+    const defaultDir = join4(accountsDir, "default");
+    if (!existsSync3(oldWhatsmeow)) return;
+    if (existsSync3(join4(defaultDir, "whatsmeow.db"))) return;
+    log3("Migrating old single-account layout to accounts/default/...");
+    mkdirSync2(defaultDir, { recursive: true });
+    renameSync(oldWhatsmeow, join4(defaultDir, "whatsmeow.db"));
+    const oldAuth = join4(this.dataDir, "auth");
+    if (existsSync3(oldAuth)) {
+      cpSync(oldAuth, join4(defaultDir, "auth"), { recursive: true });
+    }
+    this.saveAccounts([{ id: "default", name: null, phone: null }]);
+    log3("Migration complete");
+  }
+  /** Start all saved accounts */
+  async startup() {
+    this.migrateOldLayout();
+    const accounts = this.loadAccounts();
+    if (accounts.length === 0) {
+      log3("No accounts found, creating default account...");
+      await this.addAccount("default");
+      return;
+    }
+    for (const account of accounts) {
+      await this.startBridge(account.id, account.name, account.phone);
+    }
+  }
+  /** Add and start a new account */
+  async addAccount(id) {
+    if (this.bridges.has(id)) {
+      throw new Error(`Account "${id}" already exists`);
+    }
+    const accountDir = join4(this.dataDir, "accounts", id);
+    mkdirSync2(accountDir, { recursive: true });
+    await this.startBridge(id, null, null);
+    const accounts = this.loadAccounts();
+    if (!accounts.find((a) => a.id === id)) {
+      accounts.push({ id, name: null, phone: null });
+      this.saveAccounts(accounts);
+    }
+    const setupUrl = `http://localhost:${this.qrPort}/setup/${id}`;
+    return { setupUrl };
+  }
+  /** Remove an account */
+  async removeAccount(id) {
+    const bridge = this.bridges.get(id);
+    if (!bridge) return false;
+    await bridge.stop();
+    this.bridges.delete(id);
+    const accounts = this.loadAccounts().filter((a) => a.id !== id);
+    this.saveAccounts(accounts);
+    log3(`Removed account: ${id}`);
+    return true;
+  }
+  async startBridge(id, name, phone) {
+    const accountDir = join4(this.dataDir, "accounts", id);
+    mkdirSync2(accountDir, { recursive: true });
+    const bridge = new WhatsAppBridge(accountDir, id);
+    bridge.setQrPort(this.qrPort);
+    bridge.displayName = name;
+    bridge.phone = phone;
+    bridge.on("qr", (qr) => {
+      startQRServer(bridge, this.qrPort, qr, accountDir, id);
+    });
+    bridge.on("connected", () => {
+      log3(`Account "${id}" connected`);
+      this.updateAccountInfo(id, bridge.displayName, bridge.phone);
+    });
+    bridge.on("account_info", () => {
+      this.updateAccountInfo(id, bridge.displayName, bridge.phone);
+    });
+    bridge.on("message", (msg) => {
+      this.onMessage?.(id, msg);
+    });
+    this.bridges.set(id, bridge);
+    try {
+      await bridge.start();
+      log3(`Started bridge for account: ${id}`);
+    } catch (err) {
+      log3(`Failed to start bridge for account "${id}": ${err.message}`);
+      this.bridges.delete(id);
+    }
+  }
+  updateAccountInfo(id, name, phone) {
+    const accounts = this.loadAccounts();
+    const entry = accounts.find((a) => a.id === id);
+    if (entry) {
+      if (name) entry.name = name;
+      if (phone) entry.phone = phone;
+      this.saveAccounts(accounts);
+    }
+  }
+  // ── Accessors ────────────────────────────────────────────────────
+  get(accountId) {
+    return this.bridges.get(accountId);
+  }
+  getAll() {
+    return this.bridges;
+  }
+  getAccountIds() {
+    return Array.from(this.bridges.keys());
+  }
+  getConnectedIds() {
+    return Array.from(this.bridges.entries()).filter(([_, b]) => b.isConnected).map(([id]) => id);
+  }
+  /** Get bridge for sending. Errors if ambiguous (>1 connected, no id specified). */
+  resolveForSend(accountId) {
+    if (accountId) {
+      const bridge = this.bridges.get(accountId);
+      if (!bridge) return { error: `Account "${accountId}" not found` };
+      if (!bridge.isConnected) return { error: `Account "${accountId}" is not connected` };
+      return bridge;
+    }
+    const connected = this.getConnectedIds();
+    if (connected.length === 0) {
+      return { error: "No WhatsApp accounts are connected" };
+    }
+    if (connected.length === 1) {
+      return this.bridges.get(connected[0]);
+    }
+    return {
+      error: `Multiple accounts connected (${connected.join(", ")}). Please specify which account to send from using the "account" parameter.`
+    };
+  }
+  getAllAccountInfo() {
+    const saved = this.loadAccounts();
+    return saved.map((entry) => {
+      const bridge = this.bridges.get(entry.id);
+      return {
+        id: entry.id,
+        name: bridge?.displayName ?? entry.name,
+        phone: bridge?.phone ?? entry.phone,
+        connected: bridge?.isConnected ?? false,
+        authenticated: bridge?.status.authenticated ?? false
+      };
+    });
+  }
+  /** Stop all bridges */
+  async stopAll() {
+    for (const [id, bridge] of this.bridges) {
+      log3(`Stopping bridge: ${id}`);
+      await bridge.stop();
+    }
+    this.bridges.clear();
+    stopQRServer();
+  }
+  // ── Persistence ──────────────────────────────────────────────────
+  accountsPath() {
+    return join4(this.dataDir, "accounts.json");
+  }
+  loadAccounts() {
+    const path2 = this.accountsPath();
+    if (!existsSync3(path2)) return [];
+    try {
+      return JSON.parse(readFileSync2(path2, "utf-8"));
+    } catch {
+      return [];
+    }
+  }
+  saveAccounts(accounts) {
+    writeFileSync2(this.accountsPath(), JSON.stringify(accounts, null, 2));
+  }
+};
+
+// src/tools.ts
+var accountProp = {
+  account: {
+    type: "string",
+    description: "Account ID to scope this operation to. Omit to search all accounts. Use list_accounts to see available accounts."
+  }
+};
+function registerTools(server2, manager) {
+  server2.setRequestHandler(
+    CallToolRequestSchema,
+    async (request) => {
+      const { name, arguments: args } = request.params;
+      const accountId = args?.account;
+      switch (name) {
+        // ── Account management ───────────────────────────────────────
+        case "list_accounts": {
+          return json2(manager.getAllAccountInfo());
+        }
+        case "add_account": {
+          const id = args?.account_name?.toLowerCase().replace(/[^a-z0-9_-]/g, "-");
+          if (!id) return text("Missing required argument: account_name");
+          try {
+            const result = await manager.addAccount(id);
+            return json2({
+              message: `Account "${id}" created. Scan the QR code to connect.`,
+              setup_url: result.setupUrl,
+              instructions: "Open the setup URL in your browser, then scan the QR code with WhatsApp on your phone (Settings > Linked Devices > Link a Device)."
+            });
+          } catch (err) {
+            return text(err.message);
+          }
+        }
+        case "remove_account": {
+          const id = args?.account_id;
+          if (!id) return text("Missing required argument: account_id");
+          const removed = await manager.removeAccount(id);
+          return removed ? json2({ message: `Account "${id}" removed. Data preserved on disk.` }) : text(`Account "${id}" not found`);
+        }
+        // ── Status ───────────────────────────────────────────────────
+        case "check_status": {
+          const accounts = manager.getAllAccountInfo();
+          const connected = accounts.filter((a) => a.connected);
+          if (connected.length > 0) {
+            const diagnostics = accountId ? [getStoreDiagnostics(accountId)] : accounts.map((a) => getStoreDiagnostics(a.id));
+            return json2({
+              status: "connected",
+              message: `${connected.length} account(s) connected.`,
+              accounts,
+              store: diagnostics
+            });
+          }
+          const pending = accounts.find((a) => !a.connected);
+          if (pending) {
+            return text(
+              `No WhatsApp accounts are connected.
+
+Use the add_account tool to connect a new account, or check if an existing account needs re-authentication.`
+            );
+          }
+          return text(
+            "No WhatsApp accounts configured. Use add_account to connect one."
+          );
+        }
+        // ── Contact tools ────────────────────────────────────────────
+        case "search_contacts": {
+          const query = args?.query;
+          if (!query) return text("Missing required argument: query");
+          return json2(searchContacts(query, accountId));
+        }
+        case "get_contact": {
+          const identifier = args?.identifier ?? args?.phone_number ?? args?.phone;
+          if (!identifier) return text("Missing required argument: identifier");
+          const cleaned = identifier.trim();
+          if (!cleaned) return text("Identifier must be non-empty");
+          let jid;
+          let isLid = false;
+          if (cleaned.includes("@")) {
+            jid = cleaned;
+            isLid = jid.endsWith("@lid");
+          } else {
+            const digits = cleaned.replace(/\D/g, "");
+            if (digits.length > 15) {
+              jid = `${digits}@lid`;
+              isLid = true;
+            } else {
+              jid = `${digits}@s.whatsapp.net`;
+            }
+          }
+          const jidUser = jid.split("@")[0];
+          const chat = getChat(jid, false, accountId);
+          let displayName = null;
+          let resolved = false;
+          if (chat?.name) {
+            displayName = chat.name;
+            resolved = displayName !== jid && displayName !== jidUser;
+          } else {
+            displayName = getSenderName(jid, accountId);
+            resolved = displayName !== jid && displayName !== jidUser && displayName !== identifier;
+          }
+          return json2({
+            identifier,
+            jid,
+            phone_number: isLid ? null : jidUser,
+            lid: isLid ? jidUser : null,
+            name: resolved ? displayName : jidUser,
+            display_name: displayName,
+            is_lid: isLid,
+            resolved
+          });
+        }
+        // ── Message tools ────────────────────────────────────────────
+        case "list_messages": {
+          return json2(
+            listMessages({
+              accountId,
+              after: args?.after,
+              before: args?.before,
+              senderPhoneNumber: args?.sender_phone_number,
+              chatJid: args?.chat_jid,
+              query: args?.query,
+              limit: args?.limit,
+              page: args?.page,
+              sortBy: args?.sort_by
+            })
+          );
+        }
+        case "get_message_context": {
+          const messageId = args?.message_id;
+          if (!messageId) return text("Missing required argument: message_id");
+          const result = getMessageContext(
+            messageId,
+            args?.before ?? 5,
+            args?.after ?? 5,
+            accountId
+          );
+          return result ? json2(result) : text(`Message ${messageId} not found`);
+        }
+        case "send_message": {
+          const recipient = args?.recipient;
+          const message = args?.message;
+          if (!recipient) return text("Missing required argument: recipient");
+          if (!message) return text("Missing required argument: message");
+          const bridge = manager.resolveForSend(accountId);
+          if ("error" in bridge) return text(bridge.error);
+          const result = await bridge.sendMessage(recipient, message);
+          return json2(result);
+        }
+        // ── Chat tools ───────────────────────────────────────────────
+        case "list_chats": {
+          return json2(
+            listChats({
+              accountId,
+              query: args?.query,
+              limit: args?.limit,
+              page: args?.page,
+              includeLastMessage: args?.include_last_message,
+              sortBy: args?.sort_by
+            })
+          );
+        }
+        case "get_chat": {
+          const chatJid = args?.chat_jid;
+          if (!chatJid) return text("Missing required argument: chat_jid");
+          const chat = getChat(
+            chatJid,
+            args?.include_last_message ?? true,
+            accountId
+          );
+          return chat ? json2(chat) : text(`Chat ${chatJid} not found`);
+        }
+        case "get_direct_chat_by_contact": {
+          const phone = args?.sender_phone_number;
+          if (!phone)
+            return text("Missing required argument: sender_phone_number");
+          const chat = getDirectChatByContact(phone, accountId);
+          return chat ? json2(chat) : text(`No direct chat found for ${phone}`);
+        }
+        case "get_contact_chats": {
+          const jid = args?.jid;
+          if (!jid) return text("Missing required argument: jid");
+          return json2(
+            getContactChats(
+              jid,
+              args?.limit ?? 20,
+              args?.page ?? 0,
+              accountId
+            )
+          );
+        }
+        case "get_last_interaction": {
+          const jid = args?.jid;
+          if (!jid) return text("Missing required argument: jid");
+          const msg = getLastInteraction(jid, accountId);
+          return msg ? json2(msg) : text(`No messages found for ${jid}`);
+        }
+        // ── Media tools ──────────────────────────────────────────────
+        case "send_file": {
+          const recipient = args?.recipient;
+          const mediaPath = args?.media_path;
+          if (!recipient) return text("Missing required argument: recipient");
+          if (!mediaPath) return text("Missing required argument: media_path");
+          const bridge = manager.resolveForSend(accountId);
+          if ("error" in bridge) return text(bridge.error);
+          const result = await bridge.sendFile(recipient, mediaPath);
+          return json2(result);
+        }
+        case "send_audio_message": {
+          const recipient = args?.recipient;
+          const mediaPath = args?.media_path;
+          if (!recipient) return text("Missing required argument: recipient");
+          if (!mediaPath) return text("Missing required argument: media_path");
+          const bridge = manager.resolveForSend(accountId);
+          if ("error" in bridge) return text(bridge.error);
+          const result = await bridge.sendFile(recipient, mediaPath);
+          return json2(result);
+        }
+        case "download_media": {
+          return text(
+            "Media download requires the original message object. This feature is coming in a future version."
+          );
+        }
+        default:
+          return text(`Unknown tool: ${name}`);
+      }
+    }
+  );
+  server2.setRequestHandler(
+    ListToolsRequestSchema,
+    async () => ({
+      tools: [
+        // Account management tools
+        {
+          name: "list_accounts",
+          description: "List all connected WhatsApp accounts with their status, phone numbers, and names.",
+          inputSchema: { type: "object", properties: {} },
+          annotations: { readOnlyHint: true, openWorldHint: false }
+        },
+        {
+          name: "add_account",
+          description: "Connect a new WhatsApp account. Opens a QR code page in the browser for scanning.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              account_name: {
+                type: "string",
+                description: 'A short name for this account (e.g. "work", "personal", "mom")'
+              }
+            },
+            required: ["account_name"]
+          },
+          annotations: { readOnlyHint: false, openWorldHint: true }
+        },
+        {
+          name: "remove_account",
+          description: "Disconnect and remove a WhatsApp account. Data is preserved on disk.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              account_id: {
+                type: "string",
+                description: "The account ID to remove (from list_accounts)"
+              }
+            },
+            required: ["account_id"]
+          },
+          annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false }
+        },
+        // Status
+        {
+          name: "check_status",
+          description: "Check WhatsApp connection status for all accounts.",
+          inputSchema: {
+            type: "object",
+            properties: { ...accountProp }
+          },
+          annotations: { readOnlyHint: true, openWorldHint: false }
+        },
+        {
+          name: "search_contacts",
+          description: "Search WhatsApp contacts by name or phone number.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              query: {
+                type: "string",
+                description: "Search term to match against names or phones"
+              },
+              ...accountProp
+            },
+            required: ["query"]
+          },
+          annotations: { readOnlyHint: true, openWorldHint: false }
+        },
+        {
+          name: "get_contact",
+          description: "Look up a WhatsApp contact by phone number, LID, or full JID.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              identifier: {
+                type: "string",
+                description: 'Phone number, LID, or JID (e.g. "12025551234", "12025551234@s.whatsapp.net")'
+              },
+              ...accountProp
+            },
+            required: ["identifier"]
+          },
+          annotations: { readOnlyHint: true, openWorldHint: false }
+        },
+        {
+          name: "list_messages",
+          description: "Get WhatsApp messages with filters, date ranges, and sorting. Searches all accounts by default.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              after: {
+                type: "string",
+                description: "ISO-8601 date (e.g. 2026-01-01)"
+              },
+              before: {
+                type: "string",
+                description: "ISO-8601 date (e.g. 2026-01-09)"
+              },
+              sender_phone_number: {
+                type: "string",
+                description: "Filter by sender phone"
+              },
+              chat_jid: { type: "string", description: "Filter by chat JID" },
+              query: { type: "string", description: "Search term" },
+              limit: { type: "number", description: "Max results (default 50)" },
+              page: {
+                type: "number",
+                description: "Page number (default 0)"
+              },
+              sort_by: {
+                type: "string",
+                enum: ["newest", "oldest"],
+                description: "Sort order (default newest)"
+              },
+              ...accountProp
+            }
+          },
+          annotations: { readOnlyHint: true, openWorldHint: false }
+        },
+        {
+          name: "get_message_context",
+          description: "Get messages around a specific message by ID.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              message_id: { type: "string", description: "The message ID" },
+              before: {
+                type: "number",
+                description: "Messages before (default 5)"
+              },
+              after: {
+                type: "number",
+                description: "Messages after (default 5)"
+              },
+              ...accountProp
+            },
+            required: ["message_id"]
+          },
+          annotations: { readOnlyHint: true, openWorldHint: false }
+        },
+        {
+          name: "send_message",
+          description: "Send a WhatsApp text message to a contact or group. Must specify account if multiple are connected.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              recipient: {
+                type: "string",
+                description: "Phone number (no + or symbols) or JID (e.g. 12025551234 or 123@g.us)"
+              },
+              message: { type: "string", description: "Message text" },
+              ...accountProp
+            },
+            required: ["recipient", "message"]
+          },
+          annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true }
+        },
+        {
+          name: "list_chats",
+          description: "List WhatsApp chats with metadata. Searches all accounts by default.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              query: { type: "string", description: "Filter by name or JID" },
+              limit: { type: "number", description: "Max results (default 50)" },
+              page: { type: "number", description: "Page (default 0)" },
+              include_last_message: {
+                type: "boolean",
+                description: "Include last message (default true)"
+              },
+              sort_by: {
+                type: "string",
+                enum: ["last_active", "name"],
+                description: "Sort order"
+              },
+              ...accountProp
+            }
+          },
+          annotations: { readOnlyHint: true, openWorldHint: false }
+        },
+        {
+          name: "get_chat",
+          description: "Get a specific WhatsApp chat by JID.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              chat_jid: { type: "string", description: "Chat JID" },
+              include_last_message: {
+                type: "boolean",
+                description: "Include last message (default true)"
+              },
+              ...accountProp
+            },
+            required: ["chat_jid"]
+          },
+          annotations: { readOnlyHint: true, openWorldHint: false }
+        },
+        {
+          name: "get_direct_chat_by_contact",
+          description: "Find a direct message chat by phone number.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              sender_phone_number: {
+                type: "string",
+                description: "Phone number"
+              },
+              ...accountProp
+            },
+            required: ["sender_phone_number"]
+          },
+          annotations: { readOnlyHint: true, openWorldHint: false }
+        },
+        {
+          name: "get_contact_chats",
+          description: "List all chats involving a specific contact.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              jid: { type: "string", description: "Contact JID" },
+              limit: { type: "number", description: "Max results (default 20)" },
+              page: { type: "number", description: "Page (default 0)" },
+              ...accountProp
+            },
+            required: ["jid"]
+          },
+          annotations: { readOnlyHint: true, openWorldHint: false }
+        },
+        {
+          name: "get_last_interaction",
+          description: "Get the most recent message with a contact.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              jid: { type: "string", description: "Contact JID" },
+              ...accountProp
+            },
+            required: ["jid"]
+          },
+          annotations: { readOnlyHint: true, openWorldHint: false }
+        },
+        {
+          name: "send_file",
+          description: "Send an image, video, or document via WhatsApp. Must specify account if multiple are connected.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              recipient: { type: "string", description: "Phone or JID" },
+              media_path: {
+                type: "string",
+                description: "Absolute path to the file"
+              },
+              ...accountProp
+            },
+            required: ["recipient", "media_path"]
+          },
+          annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true }
+        },
+        {
+          name: "send_audio_message",
+          description: "Send a voice message via WhatsApp. Must specify account if multiple are connected.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              recipient: { type: "string", description: "Phone or JID" },
+              media_path: {
+                type: "string",
+                description: "Absolute path to the audio file"
+              },
+              ...accountProp
+            },
+            required: ["recipient", "media_path"]
+          },
+          annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true }
+        },
+        {
+          name: "download_media",
+          description: "Download media from a received WhatsApp message.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              message_id: { type: "string", description: "Message ID" },
+              chat_jid: { type: "string", description: "Chat JID" },
+              ...accountProp
+            },
+            required: ["message_id", "chat_jid"]
+          },
+          annotations: { readOnlyHint: true, openWorldHint: false }
+        }
+      ]
+    })
+  );
+}
+function text(content) {
+  return { content: [{ type: "text", text: content }] };
+}
+function json2(data) {
+  return {
+    content: [{ type: "text", text: JSON.stringify(data, null, 2) }]
+  };
+}
+
 // src/index.ts
 var __dirname5 = dirname3(fileURLToPath4(import.meta.url));
-var log3 = (msg) => console.error(`[hermeneia] ${msg}`);
-var dataDir = process.env.HERMENEIA_DATA_DIR ?? process.env.WHATSAPP_DATA_DIR ?? join4(__dirname5, "..", "data");
+var log4 = (msg) => console.error(`[hermeneia] ${msg}`);
+var dataDir = process.env.HERMENEIA_DATA_DIR ?? process.env.WHATSAPP_DATA_DIR ?? join5(__dirname5, "..", "data");
 var qrPort = parseInt(process.env.HERMENEIA_QR_PORT ?? "3456", 10);
 async function main() {
-  log3("Starting Hermeneia...");
-  log3(`Data directory: ${dataDir}`);
+  log4("Starting Hermeneia...");
+  log4(`Data directory: ${dataDir}`);
   await initStore(dataDir);
-  log3("Message store ready");
-  const bridge = new WhatsAppBridge(dataDir);
-  bridge.setQrPort(qrPort);
-  bridge.on("qr", (qr) => {
-    startQRServer(bridge, qrPort, qr, dataDir);
-  });
-  bridge.on("connected", () => {
-    log3("WhatsApp authenticated \u2014 tools are ready");
-  });
-  bridge.on("message", (msg) => {
+  log4("Message store ready");
+  const manager = new BridgeManager(dataDir, qrPort);
+  manager.setMessageHandler((accountId, msg) => {
     const dir = msg.isFromMe ? "\u2192" : "\u2190";
     const preview = msg.content?.substring(0, 60) ?? "[media]";
-    log3(`${dir} ${msg.sender}: ${preview}`);
+    log4(`[${accountId}] ${dir} ${msg.sender}: ${preview}`);
   });
-  await bridge.start();
+  await manager.startup();
   const mcpServer = new Server(
     {
       name: "hermeneia",
-      version: "0.1.0"
+      version: "0.3.0"
     },
     {
       capabilities: {
@@ -29482,14 +29932,14 @@ async function main() {
       }
     }
   );
-  registerTools(mcpServer, bridge);
+  registerTools(mcpServer, manager);
   const transport = new StdioServerTransport();
   await mcpServer.connect(transport);
-  log3("MCP server running on stdio");
+  log4("MCP server running on stdio");
   const shutdown = async () => {
-    log3("Shutting down...");
+    log4("Shutting down...");
     stopQRServer();
-    await bridge.stop();
+    await manager.stopAll();
     await mcpServer.close();
     process.exit(0);
   };

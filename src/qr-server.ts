@@ -1,7 +1,8 @@
 // Hermeneia — Web-based QR code auth page
 //
 // Starts a tiny local HTTP server that displays the WhatsApp QR code
-// in a browser instead of the terminal. Auto-opens on first run.
+// in a browser instead of the terminal. Supports multiple accounts
+// via /setup/{accountId} routes.
 
 import { createServer, type Server } from "http";
 import { existsSync } from "fs";
@@ -12,15 +13,35 @@ import type { WhatsAppBridge } from "./bridge.js";
 const log = (msg: string) => console.error(`[hermeneia:qr] ${msg}`);
 
 let server: Server | null = null;
-let currentQRDataUrl: string | null = null;
-let isAuthenticated = false;
+
+// Per-account QR session state
+interface QRSession {
+  qrDataUrl: string | null;
+  authenticated: boolean;
+  bridge: WhatsAppBridge;
+}
+const sessions = new Map<string, QRSession>();
+
+function getOrCreateSession(bridge: WhatsAppBridge, accountId: string): QRSession {
+  let session = sessions.get(accountId);
+  if (!session) {
+    session = { qrDataUrl: null, authenticated: false, bridge };
+    sessions.set(accountId, session);
+  }
+  return session;
+}
+
+function setupHtml(accountId: string): string {
+  const title = accountId === "default" ? "Connect WhatsApp" : `Connect WhatsApp — ${accountId}`;
+  return SETUP_HTML.replace("{{TITLE}}", title).replace("{{ACCOUNT_ID}}", accountId);
+}
 
 const SETUP_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Hermeneia — Connect WhatsApp</title>
+  <title>Hermeneia — {{TITLE}}</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -108,7 +129,7 @@ const SETUP_HTML = `<!DOCTYPE html>
 <body>
   <div class="card">
     <h1>Hermeneia</h1>
-    <p class="subtitle">Connect your WhatsApp account to Claude</p>
+    <p class="subtitle">{{TITLE}}</p>
 
     <div id="qr-view">
       <div id="qr-container">
@@ -134,9 +155,10 @@ const SETUP_HTML = `<!DOCTYPE html>
   </div>
 
   <script>
+    const accountId = "{{ACCOUNT_ID}}";
     async function poll() {
       try {
-        const res = await fetch('/api/status');
+        const res = await fetch('/api/status/' + accountId);
         const data = await res.json();
         if (data.authenticated) {
           document.getElementById('qr-view').classList.add('waiting');
@@ -157,74 +179,123 @@ const SETUP_HTML = `<!DOCTYPE html>
 </body>
 </html>`;
 
-async function applyQR(qrString: string): Promise<void> {
+async function applyQR(accountId: string, qrString: string): Promise<void> {
   try {
-    currentQRDataUrl = await QRCode.toDataURL(qrString, {
+    const dataUrl = await QRCode.toDataURL(qrString, {
       width: 256,
       margin: 0,
       color: { dark: "#000000", light: "#ffffff" },
     });
+    const session = sessions.get(accountId);
+    if (session) session.qrDataUrl = dataUrl;
   } catch (err) {
     log(`QR generation error: ${err}`);
   }
 }
 
-export function startQRServer(bridge: WhatsAppBridge, port = 3456, initialQr?: string, dataDir?: string): void {
-  // If already running, just update the QR (WhatsApp refreshes every ~20s)
-  if (server) {
-    if (initialQr) applyQR(initialQr);
-    return;
+export function startQRServer(
+  bridge: WhatsAppBridge,
+  port = 3456,
+  initialQr?: string,
+  dataDir?: string,
+  accountId = "default"
+): void {
+  const session = getOrCreateSession(bridge, accountId);
+
+  // Convert the QR string immediately
+  if (initialQr) applyQR(accountId, initialQr);
+
+  // Keep updating on subsequent QR refreshes (only attach once per bridge)
+  if (!(bridge as any)._qrListenerAttached) {
+    bridge.on("qr", (qrString: string) => {
+      applyQR(accountId, qrString);
+    });
+
+    bridge.on("connected", () => {
+      session.authenticated = true;
+      // Clean up session after page shows success
+      setTimeout(() => {
+        sessions.delete(accountId);
+        // Stop server if no more sessions
+        if (sessions.size === 0) stopQRServer();
+      }, 30_000);
+    });
+
+    (bridge as any)._qrListenerAttached = true;
   }
 
-  // Convert the QR string that triggered this call immediately — don't wait for next event
-  if (initialQr) applyQR(initialQr);
+  // Start HTTP server if not already running
+  if (!server) {
+    server = createServer((req, res) => {
+      const url = req.url ?? "/";
 
-  // Keep updating on subsequent QR refreshes
-  bridge.on("qr", (qrString: string) => {
-    applyQR(qrString);
-  });
+      // /setup or /setup/ → default account
+      // /setup/{accountId} → specific account
+      if (url === "/setup" || url === "/setup/" || url === "/") {
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(setupHtml("default"));
+        return;
+      }
 
-  bridge.on("connected", () => {
-    isAuthenticated = true;
-    // Keep server running briefly so the page can show success
-    setTimeout(() => stopQRServer(), 30_000);
-  });
+      const setupMatch = url.match(/^\/setup\/([^/?]+)/);
+      if (setupMatch) {
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(setupHtml(setupMatch[1]));
+        return;
+      }
 
-  server = createServer((req, res) => {
-    if (req.url === "/setup" || req.url === "/") {
-      res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(SETUP_HTML);
-      return;
-    }
+      // /api/status/{accountId}
+      const statusMatch = url.match(/^\/api\/status\/([^/?]+)/);
+      if (statusMatch) {
+        const id = statusMatch[1];
+        const s = sessions.get(id);
+        res.writeHead(200, {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-cache",
+        });
+        res.end(
+          JSON.stringify({
+            authenticated: s?.authenticated ?? false,
+            qr_data_url: s?.qrDataUrl ?? null,
+          })
+        );
+        return;
+      }
 
-    if (req.url === "/api/status") {
-      res.writeHead(200, {
-        "Content-Type": "application/json",
-        "Cache-Control": "no-cache",
-      });
-      res.end(
-        JSON.stringify({
-          authenticated: isAuthenticated,
-          qr_data_url: currentQRDataUrl,
-        })
-      );
-      return;
-    }
+      // Legacy /api/status → default account
+      if (url === "/api/status") {
+        const s = sessions.get("default");
+        res.writeHead(200, {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-cache",
+        });
+        res.end(
+          JSON.stringify({
+            authenticated: s?.authenticated ?? false,
+            qr_data_url: s?.qrDataUrl ?? null,
+          })
+        );
+        return;
+      }
 
-    res.writeHead(404);
-    res.end("Not found");
-  });
+      res.writeHead(404);
+      res.end("Not found");
+    });
 
-  server.listen(port, () => {
-    log(`Setup page: http://localhost:${port}/setup`);
-  });
+    server.listen(port, () => {
+      log(`Setup page: http://localhost:${port}/setup`);
+    });
+  }
 
   // Only auto-open browser on first-time setup (no existing auth)
   const hasExistingAuth = dataDir && existsSync(join(dataDir, "auth", "creds.json"));
   if (!hasExistingAuth) {
-    openBrowser(`http://localhost:${port}/setup`);
+    const setupUrl = accountId === "default"
+      ? `http://localhost:${port}/setup`
+      : `http://localhost:${port}/setup/${accountId}`;
+    openBrowser(setupUrl);
   } else {
-    log("QR generated during reconnect — not auto-opening browser (auth exists)");
+    log(`QR generated during reconnect for "${accountId}" — not auto-opening browser`);
   }
 }
 
@@ -232,6 +303,7 @@ export function stopQRServer(): void {
   if (server) {
     server.close();
     server = null;
+    sessions.clear();
     log("QR server stopped");
   }
 }
@@ -241,7 +313,6 @@ async function openBrowser(url: string): Promise<void> {
     const open = (await import("open")).default;
     await open(url);
   } catch {
-    // Silently fail — user can open manually
     log(`Open ${url} in your browser to connect WhatsApp`);
   }
 }

@@ -53,38 +53,43 @@ export async function initStore(dataDir: string): Promise<void> {
 
   db.run(`
     CREATE TABLE IF NOT EXISTS chats (
-      jid TEXT PRIMARY KEY,
+      jid TEXT,
+      account_id TEXT NOT NULL DEFAULT 'default',
       name TEXT,
-      last_message_time TEXT
+      last_message_time TEXT,
+      PRIMARY KEY (jid, account_id)
     )
   `);
 
   // Contacts table — maps LIDs to phone JIDs and stores all name variants
   db.run(`
     CREATE TABLE IF NOT EXISTS contacts (
-      id TEXT PRIMARY KEY,
+      id TEXT,
+      account_id TEXT NOT NULL DEFAULT 'default',
       lid TEXT,
       phone_jid TEXT,
       name TEXT,
       notify TEXT,
-      verified_name TEXT
+      verified_name TEXT,
+      PRIMARY KEY (id, account_id)
     )
   `);
   db.run("CREATE INDEX IF NOT EXISTS idx_contacts_lid ON contacts(lid)");
   db.run("CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone_jid)");
+  db.run("CREATE INDEX IF NOT EXISTS idx_contacts_account ON contacts(account_id)");
 
   db.run(`
     CREATE TABLE IF NOT EXISTS messages (
       id TEXT,
       chat_jid TEXT,
+      account_id TEXT NOT NULL DEFAULT 'default',
       sender TEXT,
       content TEXT,
       timestamp TEXT,
       is_from_me INTEGER,
       media_type TEXT,
       filename TEXT,
-      PRIMARY KEY (id, chat_jid),
-      FOREIGN KEY (chat_jid) REFERENCES chats(jid)
+      PRIMARY KEY (id, chat_jid, account_id)
     )
   `);
 
@@ -97,6 +102,12 @@ export async function initStore(dataDir: string): Promise<void> {
   db.run(
     "CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender)"
   );
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_messages_account ON messages(account_id)"
+  );
+
+  // Migrate old schema: add account_id column if missing
+  migrateAddAccountId();
 
   // Flush on exit
   process.on("exit", flush);
@@ -106,9 +117,68 @@ export async function initStore(dataDir: string): Promise<void> {
   });
 }
 
+function migrateAddAccountId(): void {
+  // Check if old schema (no account_id) exists by inspecting table info
+  try {
+    const cols = queryAll("PRAGMA table_info(chats)");
+    const hasAccountId = cols.some((c: any) => c.name === "account_id");
+    if (hasAccountId) return; // Already migrated
+
+    // Old schema detected — rebuild tables with account_id
+    db.run("BEGIN TRANSACTION");
+
+    // Chats: add column and update primary key
+    db.run("ALTER TABLE chats RENAME TO chats_old");
+    db.run(`CREATE TABLE chats (
+      jid TEXT, account_id TEXT NOT NULL DEFAULT 'default',
+      name TEXT, last_message_time TEXT,
+      PRIMARY KEY (jid, account_id)
+    )`);
+    db.run("INSERT INTO chats (jid, account_id, name, last_message_time) SELECT jid, 'default', name, last_message_time FROM chats_old");
+    db.run("DROP TABLE chats_old");
+
+    // Contacts: add column and update primary key
+    db.run("ALTER TABLE contacts RENAME TO contacts_old");
+    db.run(`CREATE TABLE contacts (
+      id TEXT, account_id TEXT NOT NULL DEFAULT 'default',
+      lid TEXT, phone_jid TEXT, name TEXT, notify TEXT, verified_name TEXT,
+      PRIMARY KEY (id, account_id)
+    )`);
+    db.run("INSERT INTO contacts (id, account_id, lid, phone_jid, name, notify, verified_name) SELECT id, 'default', lid, phone_jid, name, notify, verified_name FROM contacts_old");
+    db.run("DROP TABLE contacts_old");
+
+    // Messages: add column and update primary key
+    db.run("ALTER TABLE messages RENAME TO messages_old");
+    db.run(`CREATE TABLE messages (
+      id TEXT, chat_jid TEXT, account_id TEXT NOT NULL DEFAULT 'default',
+      sender TEXT, content TEXT, timestamp TEXT, is_from_me INTEGER,
+      media_type TEXT, filename TEXT,
+      PRIMARY KEY (id, chat_jid, account_id)
+    )`);
+    db.run("INSERT INTO messages (id, chat_jid, account_id, sender, content, timestamp, is_from_me, media_type, filename) SELECT id, chat_jid, 'default', sender, content, timestamp, is_from_me, media_type, filename FROM messages_old");
+    db.run("DROP TABLE messages_old");
+
+    // Recreate indices
+    db.run("CREATE INDEX IF NOT EXISTS idx_contacts_lid ON contacts(lid)");
+    db.run("CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone_jid)");
+    db.run("CREATE INDEX IF NOT EXISTS idx_contacts_account ON contacts(account_id)");
+    db.run("CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)");
+    db.run("CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_jid)");
+    db.run("CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender)");
+    db.run("CREATE INDEX IF NOT EXISTS idx_messages_account ON messages(account_id)");
+
+    db.run("COMMIT");
+    console.error("[hermeneia] Migrated database schema to multi-account format");
+    flush();
+  } catch (err) {
+    try { db.run("ROLLBACK"); } catch {}
+    console.error("[hermeneia] Migration error:", err);
+  }
+}
+
 // ── Contact operations ─────────────────────────────────────────────
 
-export function upsertContact(opts: {
+export function upsertContact(accountId: string, opts: {
   id: string;
   lid?: string | null;
   phoneJid?: string | null;
@@ -117,58 +187,63 @@ export function upsertContact(opts: {
   verifiedName?: string | null;
 }): void {
   db.run(
-    `INSERT INTO contacts (id, lid, phone_jid, name, notify, verified_name)
-     VALUES (?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET
+    `INSERT INTO contacts (id, account_id, lid, phone_jid, name, notify, verified_name)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id, account_id) DO UPDATE SET
        lid = COALESCE(excluded.lid, contacts.lid),
        phone_jid = COALESCE(excluded.phone_jid, contacts.phone_jid),
        name = COALESCE(excluded.name, contacts.name),
        notify = COALESCE(excluded.notify, contacts.notify),
        verified_name = COALESCE(excluded.verified_name, contacts.verified_name)`,
-    [opts.id, opts.lid ?? null, opts.phoneJid ?? null, opts.name ?? null, opts.notify ?? null, opts.verifiedName ?? null]
+    [opts.id, accountId, opts.lid ?? null, opts.phoneJid ?? null, opts.name ?? null, opts.notify ?? null, opts.verifiedName ?? null]
   );
   maybeFlush();
 
   // Also update the chats table name if we have one
   const displayName = opts.name ?? opts.notify ?? opts.verifiedName ?? null;
   if (displayName) {
-    upsertChat(opts.id, displayName, new Date(0).toISOString());
-    // If we know the LID and phone JID, update both chat entries
-    if (opts.lid) upsertChat(opts.lid, displayName, new Date(0).toISOString());
-    if (opts.phoneJid) upsertChat(opts.phoneJid, displayName, new Date(0).toISOString());
+    upsertChat(accountId, opts.id, displayName, new Date(0).toISOString());
+    if (opts.lid) upsertChat(accountId, opts.lid, displayName, new Date(0).toISOString());
+    if (opts.phoneJid) upsertChat(accountId, opts.phoneJid, displayName, new Date(0).toISOString());
   }
 }
 
 /** Get all chat JIDs for batch contact resolution */
-export function getAllChatJids(): string[] {
+export function getAllChatJids(accountId?: string): string[] {
+  if (accountId) {
+    return queryAll("SELECT jid FROM chats WHERE account_id = ?", [accountId]).map((r) => r.jid as string);
+  }
   return queryAll("SELECT jid FROM chats").map((r) => r.jid as string);
 }
 
 /** Diagnostic: return DB stats for debugging contact resolution */
-export function getStoreDiagnostics(): any {
-  const chatCount = queryOne("SELECT COUNT(*) as n FROM chats");
-  const chatWithName = queryOne("SELECT COUNT(*) as n FROM chats WHERE name IS NOT NULL AND name != ''");
-  const contactCount = queryOne("SELECT COUNT(*) as n FROM contacts");
-  const contactWithName = queryOne("SELECT COUNT(*) as n FROM contacts WHERE name IS NOT NULL OR notify IS NOT NULL OR verified_name IS NOT NULL");
-  const msgCount = queryOne("SELECT COUNT(*) as n FROM messages");
-  const sampleContacts = queryAll("SELECT * FROM contacts LIMIT 5");
-  const sampleChats = queryAll("SELECT jid, name FROM chats LIMIT 5");
+export function getStoreDiagnostics(accountId?: string): any {
+  const acFilter = accountId ? " WHERE account_id = ?" : "";
+  const acParams = accountId ? [accountId] : [];
+
+  const chatCount = queryOne(`SELECT COUNT(*) as n FROM chats${acFilter}`, acParams);
+  const chatWithName = queryOne(`SELECT COUNT(*) as n FROM chats WHERE name IS NOT NULL AND name != ''${accountId ? " AND account_id = ?" : ""}`, acParams);
+  const contactCount = queryOne(`SELECT COUNT(*) as n FROM contacts${acFilter}`, acParams);
+  const contactWithName = queryOne(`SELECT COUNT(*) as n FROM contacts WHERE (name IS NOT NULL OR notify IS NOT NULL OR verified_name IS NOT NULL)${accountId ? " AND account_id = ?" : ""}`, acParams);
+  const msgCount = queryOne(`SELECT COUNT(*) as n FROM messages${acFilter}`, acParams);
 
   return {
+    account_id: accountId ?? "all",
     chats: { total: chatCount?.n, withName: chatWithName?.n },
     contacts: { total: contactCount?.n, withName: contactWithName?.n },
     messages: { total: msgCount?.n },
-    sampleContacts,
-    sampleChats,
   };
 }
 
 /** Resolve display name for any JID (LID, phone, or group) */
-export function resolveContactName(jid: string): string | null {
+export function resolveContactName(jid: string, accountId?: string): string | null {
+  const acFilter = accountId ? " AND account_id = ?" : "";
+  const acParams = accountId ? [accountId] : [];
+
   // 1. Direct contact lookup by id
   const direct = queryOne(
-    "SELECT name, notify, verified_name FROM contacts WHERE id = ?",
-    [jid]
+    `SELECT name, notify, verified_name FROM contacts WHERE id = ?${acFilter}`,
+    [jid, ...acParams]
   );
   if (direct) {
     const n = direct.name ?? direct.notify ?? direct.verified_name;
@@ -177,8 +252,8 @@ export function resolveContactName(jid: string): string | null {
 
   // 2. Cross-reference: if this is a LID, find via lid column; if phone, via phone_jid
   const crossRef = queryOne(
-    "SELECT name, notify, verified_name FROM contacts WHERE lid = ? OR phone_jid = ?",
-    [jid, jid]
+    `SELECT name, notify, verified_name FROM contacts WHERE (lid = ? OR phone_jid = ?)${acFilter}`,
+    [jid, jid, ...acParams]
   );
   if (crossRef) {
     const n = crossRef.name ?? crossRef.notify ?? crossRef.verified_name;
@@ -186,7 +261,7 @@ export function resolveContactName(jid: string): string | null {
   }
 
   // 3. Fall back to chats table
-  const chat = queryOne("SELECT name FROM chats WHERE jid = ?", [jid]);
+  const chat = queryOne(`SELECT name FROM chats WHERE jid = ?${acFilter}`, [jid, ...acParams]);
   if (chat?.name) return chat.name;
 
   return null;
@@ -195,17 +270,18 @@ export function resolveContactName(jid: string): string | null {
 // ── Chat operations ────────────────────────────────────────────────
 
 export function upsertChat(
+  accountId: string,
   jid: string,
   name: string | null,
   lastMessageTime: string
 ): void {
   db.run(
-    `INSERT INTO chats (jid, name, last_message_time)
-     VALUES (?, ?, ?)
-     ON CONFLICT(jid) DO UPDATE SET
+    `INSERT INTO chats (jid, account_id, name, last_message_time)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(jid, account_id) DO UPDATE SET
        name = COALESCE(excluded.name, chats.name),
        last_message_time = MAX(excluded.last_message_time, chats.last_message_time)`,
-    [jid, name, lastMessageTime]
+    [jid, accountId, name, lastMessageTime]
   );
   maybeFlush();
 }
@@ -213,6 +289,7 @@ export function upsertChat(
 // ── Message operations ─────────────────────────────────────────────
 
 export function storeMessage(
+  accountId: string,
   id: string,
   chatJid: string,
   sender: string,
@@ -224,9 +301,9 @@ export function storeMessage(
 ): void {
   db.run(
     `INSERT OR IGNORE INTO messages
-       (id, chat_jid, sender, content, timestamp, is_from_me, media_type, filename)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, chatJid, sender, content, timestamp, isFromMe ? 1 : 0, mediaType, filename]
+       (id, chat_jid, account_id, sender, content, timestamp, is_from_me, media_type, filename)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, chatJid, accountId, sender, content, timestamp, isFromMe ? 1 : 0, mediaType, filename]
   );
   maybeFlush();
 }
@@ -249,11 +326,11 @@ function queryOne(sql: string, params: any[] = []): any | null {
   return rows.length > 0 ? rows[0] : null;
 }
 
-export function getSenderName(senderJid: string): string {
-  return resolveContactName(senderJid) ?? senderJid;
+export function getSenderName(senderJid: string, accountId?: string): string {
+  return resolveContactName(senderJid, accountId) ?? senderJid;
 }
 
-function toMessageDict(row: any, includeSenderName = true): MessageDict {
+function toMessageDict(row: any, includeSenderName = true, accountId?: string): MessageDict {
   const senderPhone = row.sender?.split("@")[0] ?? row.sender;
   let senderName: string | null = null;
   let senderDisplay: string | null = null;
@@ -263,7 +340,7 @@ function toMessageDict(row: any, includeSenderName = true): MessageDict {
       senderName = "Me";
       senderDisplay = "Me";
     } else {
-      const resolved = getSenderName(row.sender);
+      const resolved = getSenderName(row.sender, accountId ?? row.account_id);
       if (resolved && resolved !== row.sender && resolved !== senderPhone) {
         senderName = resolved;
         senderDisplay = `${resolved} (${senderPhone})`;
@@ -274,7 +351,7 @@ function toMessageDict(row: any, includeSenderName = true): MessageDict {
     }
   }
 
-  return {
+  const dict: MessageDict = {
     id: row.id,
     timestamp: row.timestamp,
     sender_jid: row.sender,
@@ -287,11 +364,14 @@ function toMessageDict(row: any, includeSenderName = true): MessageDict {
     chat_name: row.chat_name ?? null,
     media_type: row.media_type ?? null,
   };
+  if (row.account_id) dict.account_id = row.account_id;
+  return dict;
 }
 
 // ── Public query functions ─────────────────────────────────────────
 
 export function listMessages(opts: {
+  accountId?: string;
   after?: string;
   before?: string;
   senderPhoneNumber?: string;
@@ -309,6 +389,10 @@ export function listMessages(opts: {
   const where: string[] = [];
   const params: any[] = [];
 
+  if (opts.accountId) {
+    where.push("m.account_id = ?");
+    params.push(opts.accountId);
+  }
   if (opts.after) {
     where.push("m.timestamp > ?");
     params.push(opts.after);
@@ -333,10 +417,10 @@ export function listMessages(opts: {
   const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
 
   const sql = `
-    SELECT m.id, m.chat_jid, m.sender, m.content, m.timestamp,
+    SELECT m.id, m.chat_jid, m.account_id, m.sender, m.content, m.timestamp,
            m.is_from_me, m.media_type, m.filename, c.name AS chat_name
     FROM messages m
-    JOIN chats c ON m.chat_jid = c.jid
+    JOIN chats c ON m.chat_jid = c.jid AND m.account_id = c.account_id
     ${whereClause}
     ORDER BY m.timestamp ${order}
     LIMIT ? OFFSET ?
@@ -349,33 +433,37 @@ export function listMessages(opts: {
 export function getMessageContext(
   messageId: string,
   before = 5,
-  after = 5
+  after = 5,
+  accountId?: string
 ): { message: MessageDict; before: MessageDict[]; after: MessageDict[] } | null {
+  const acFilter = accountId ? " AND m.account_id = ?" : "";
+  const acParams = accountId ? [accountId] : [];
+
   const msg = queryOne(
-    `SELECT m.id, m.chat_jid, m.sender, m.content, m.timestamp,
+    `SELECT m.id, m.chat_jid, m.account_id, m.sender, m.content, m.timestamp,
             m.is_from_me, m.media_type, m.filename, c.name AS chat_name
-     FROM messages m JOIN chats c ON m.chat_jid = c.jid
-     WHERE m.id = ?`,
-    [messageId]
+     FROM messages m JOIN chats c ON m.chat_jid = c.jid AND m.account_id = c.account_id
+     WHERE m.id = ?${acFilter}`,
+    [messageId, ...acParams]
   );
   if (!msg) return null;
 
   const beforeRows = queryAll(
-    `SELECT m.id, m.chat_jid, m.sender, m.content, m.timestamp,
+    `SELECT m.id, m.chat_jid, m.account_id, m.sender, m.content, m.timestamp,
             m.is_from_me, m.media_type, m.filename, c.name AS chat_name
-     FROM messages m JOIN chats c ON m.chat_jid = c.jid
-     WHERE m.chat_jid = ? AND m.timestamp < ?
+     FROM messages m JOIN chats c ON m.chat_jid = c.jid AND m.account_id = c.account_id
+     WHERE m.chat_jid = ? AND m.account_id = ? AND m.timestamp < ?
      ORDER BY m.timestamp DESC LIMIT ?`,
-    [msg.chat_jid, msg.timestamp, before]
+    [msg.chat_jid, msg.account_id, msg.timestamp, before]
   );
 
   const afterRows = queryAll(
-    `SELECT m.id, m.chat_jid, m.sender, m.content, m.timestamp,
+    `SELECT m.id, m.chat_jid, m.account_id, m.sender, m.content, m.timestamp,
             m.is_from_me, m.media_type, m.filename, c.name AS chat_name
-     FROM messages m JOIN chats c ON m.chat_jid = c.jid
-     WHERE m.chat_jid = ? AND m.timestamp > ?
+     FROM messages m JOIN chats c ON m.chat_jid = c.jid AND m.account_id = c.account_id
+     WHERE m.chat_jid = ? AND m.account_id = ? AND m.timestamp > ?
      ORDER BY m.timestamp ASC LIMIT ?`,
-    [msg.chat_jid, msg.timestamp, after]
+    [msg.chat_jid, msg.account_id, msg.timestamp, after]
   );
 
   return {
@@ -386,6 +474,7 @@ export function getMessageContext(
 }
 
 export function listChats(opts: {
+  accountId?: string;
   query?: string;
   limit?: number;
   page?: number;
@@ -401,6 +490,10 @@ export function listChats(opts: {
   const where: string[] = [];
   const params: any[] = [];
 
+  if (opts.accountId) {
+    where.push("c.account_id = ?");
+    params.push(opts.accountId);
+  }
   if (opts.query) {
     where.push("(LOWER(c.name) LIKE LOWER(?) OR c.jid LIKE ?)");
     params.push(`%${opts.query}%`, `%${opts.query}%`);
@@ -409,14 +502,14 @@ export function listChats(opts: {
   const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
   const incLast = opts.includeLastMessage !== false;
   const joinClause = incLast
-    ? "LEFT JOIN messages m ON c.jid = m.chat_jid AND c.last_message_time = m.timestamp"
+    ? "LEFT JOIN messages m ON c.jid = m.chat_jid AND c.account_id = m.account_id AND c.last_message_time = m.timestamp"
     : "";
   const selectLast = incLast
     ? "m.content AS last_message, m.sender AS last_sender, m.is_from_me AS last_is_from_me"
     : "NULL AS last_message, NULL AS last_sender, NULL AS last_is_from_me";
 
   const sql = `
-    SELECT c.jid, c.name, c.last_message_time, ${selectLast}
+    SELECT c.jid, c.account_id, c.name, c.last_message_time, ${selectLast}
     FROM chats c ${joinClause}
     ${whereClause}
     ORDER BY ${orderBy}
@@ -424,56 +517,68 @@ export function listChats(opts: {
   `;
   params.push(limit, offset);
 
-  return queryAll(sql, params).map((r) => ({
-    jid: r.jid,
-    name: r.name || resolveContactName(r.jid) || r.jid.split("@")[0],
-    is_group: (r.jid as string).endsWith("@g.us"),
-    last_message_time: r.last_message_time,
-    last_message: r.last_message,
-    last_sender: r.last_sender,
-    last_is_from_me: r.last_is_from_me != null ? !!r.last_is_from_me : null,
-  }));
+  return queryAll(sql, params).map((r) => {
+    const dict: ChatDict = {
+      jid: r.jid,
+      name: r.name || resolveContactName(r.jid, r.account_id) || r.jid.split("@")[0],
+      is_group: (r.jid as string).endsWith("@g.us"),
+      last_message_time: r.last_message_time,
+      last_message: r.last_message,
+      last_sender: r.last_sender,
+      last_is_from_me: r.last_is_from_me != null ? !!r.last_is_from_me : null,
+    };
+    if (r.account_id) dict.account_id = r.account_id;
+    return dict;
+  });
 }
 
-export function getChat(chatJid: string, includeLastMessage = true): ChatDict | null {
+export function getChat(chatJid: string, includeLastMessage = true, accountId?: string): ChatDict | null {
+  const acFilter = accountId ? " AND c.account_id = ?" : "";
+  const acParams = accountId ? [accountId] : [];
+
   const joinClause = includeLastMessage
-    ? "LEFT JOIN messages m ON c.jid = m.chat_jid AND c.last_message_time = m.timestamp"
+    ? "LEFT JOIN messages m ON c.jid = m.chat_jid AND c.account_id = m.account_id AND c.last_message_time = m.timestamp"
     : "";
   const selectLast = includeLastMessage
     ? "m.content AS last_message, m.sender AS last_sender, m.is_from_me AS last_is_from_me"
     : "NULL AS last_message, NULL AS last_sender, NULL AS last_is_from_me";
 
   const row = queryOne(
-    `SELECT c.jid, c.name, c.last_message_time, ${selectLast}
-     FROM chats c ${joinClause} WHERE c.jid = ?`,
-    [chatJid]
+    `SELECT c.jid, c.account_id, c.name, c.last_message_time, ${selectLast}
+     FROM chats c ${joinClause} WHERE c.jid = ?${acFilter}`,
+    [chatJid, ...acParams]
   );
   if (!row) return null;
 
-  return {
+  const dict: ChatDict = {
     jid: row.jid,
-    name: row.name || resolveContactName(row.jid) || row.jid.split("@")[0],
+    name: row.name || resolveContactName(row.jid, row.account_id) || row.jid.split("@")[0],
     is_group: (row.jid as string).endsWith("@g.us"),
     last_message_time: row.last_message_time,
     last_message: row.last_message,
     last_sender: row.last_sender,
     last_is_from_me: row.last_is_from_me != null ? !!row.last_is_from_me : null,
   };
+  if (row.account_id) dict.account_id = row.account_id;
+  return dict;
 }
 
-export function getDirectChatByContact(phone: string): ChatDict | null {
+export function getDirectChatByContact(phone: string, accountId?: string): ChatDict | null {
+  const acFilter = accountId ? " AND c.account_id = ?" : "";
+  const acParams = accountId ? [accountId] : [];
+
   const row = queryOne(
-    `SELECT c.jid, c.name, c.last_message_time,
+    `SELECT c.jid, c.account_id, c.name, c.last_message_time,
             m.content AS last_message, m.sender AS last_sender, m.is_from_me AS last_is_from_me
      FROM chats c
-     LEFT JOIN messages m ON c.jid = m.chat_jid AND c.last_message_time = m.timestamp
-     WHERE c.jid LIKE ? AND c.jid NOT LIKE '%@g.us'
+     LEFT JOIN messages m ON c.jid = m.chat_jid AND c.account_id = m.account_id AND c.last_message_time = m.timestamp
+     WHERE c.jid LIKE ? AND c.jid NOT LIKE '%@g.us'${acFilter}
      LIMIT 1`,
-    [`%${phone}%`]
+    [`%${phone}%`, ...acParams]
   );
   if (!row) return null;
 
-  return {
+  const dict: ChatDict = {
     jid: row.jid,
     name: row.name,
     is_group: false,
@@ -482,88 +587,108 @@ export function getDirectChatByContact(phone: string): ChatDict | null {
     last_sender: row.last_sender,
     last_is_from_me: row.last_is_from_me != null ? !!row.last_is_from_me : null,
   };
+  if (row.account_id) dict.account_id = row.account_id;
+  return dict;
 }
 
-export function getContactChats(jid: string, limit = 20, page = 0): ChatDict[] {
+export function getContactChats(jid: string, limit = 20, page = 0, accountId?: string): ChatDict[] {
+  const acFilter = accountId ? " AND c.account_id = ?" : "";
+  const acParams = accountId ? [accountId] : [];
+
   return queryAll(
-    `SELECT DISTINCT c.jid, c.name, c.last_message_time,
+    `SELECT DISTINCT c.jid, c.account_id, c.name, c.last_message_time,
             m.content AS last_message, m.sender AS last_sender, m.is_from_me AS last_is_from_me
      FROM chats c
-     JOIN messages m ON c.jid = m.chat_jid
-     WHERE m.sender = ? OR c.jid = ?
+     JOIN messages m ON c.jid = m.chat_jid AND c.account_id = m.account_id
+     WHERE (m.sender = ? OR c.jid = ?)${acFilter}
      ORDER BY c.last_message_time DESC
      LIMIT ? OFFSET ?`,
-    [jid, jid, limit, page * limit]
-  ).map((r) => ({
-    jid: r.jid,
-    name: r.name,
-    is_group: (r.jid as string).endsWith("@g.us"),
-    last_message_time: r.last_message_time,
-    last_message: r.last_message,
-    last_sender: r.last_sender,
-    last_is_from_me: r.last_is_from_me != null ? !!r.last_is_from_me : null,
-  }));
+    [jid, jid, ...acParams, limit, page * limit]
+  ).map((r) => {
+    const dict: ChatDict = {
+      jid: r.jid,
+      name: r.name,
+      is_group: (r.jid as string).endsWith("@g.us"),
+      last_message_time: r.last_message_time,
+      last_message: r.last_message,
+      last_sender: r.last_sender,
+      last_is_from_me: r.last_is_from_me != null ? !!r.last_is_from_me : null,
+    };
+    if (r.account_id) dict.account_id = r.account_id;
+    return dict;
+  });
 }
 
-export function getLastInteraction(jid: string): MessageDict | null {
+export function getLastInteraction(jid: string, accountId?: string): MessageDict | null {
+  const acFilter = accountId ? " AND m.account_id = ?" : "";
+  const acParams = accountId ? [accountId] : [];
+
   const row = queryOne(
-    `SELECT m.id, m.chat_jid, m.sender, m.content, m.timestamp,
+    `SELECT m.id, m.chat_jid, m.account_id, m.sender, m.content, m.timestamp,
             m.is_from_me, m.media_type, m.filename, c.name AS chat_name
-     FROM messages m JOIN chats c ON m.chat_jid = c.jid
-     WHERE m.sender = ? OR c.jid = ?
+     FROM messages m JOIN chats c ON m.chat_jid = c.jid AND m.account_id = c.account_id
+     WHERE (m.sender = ? OR c.jid = ?)${acFilter}
      ORDER BY m.timestamp DESC LIMIT 1`,
-    [jid, jid]
+    [jid, jid, ...acParams]
   );
   return row ? toMessageDict(row) : null;
 }
 
-export function searchContacts(query: string): ContactDict[] {
+export function searchContacts(query: string, accountId?: string): ContactDict[] {
   const pattern = `%${query}%`;
+  const acFilter = accountId ? " AND account_id = ?" : "";
+  const acParams = accountId ? [accountId] : [];
 
   // Search both the contacts table and chats table, merge results
   const fromContacts = queryAll(
-    `SELECT id, lid, phone_jid, name, notify, verified_name FROM contacts
-     WHERE LOWER(COALESCE(name, '')) LIKE LOWER(?)
+    `SELECT id, account_id, lid, phone_jid, name, notify, verified_name FROM contacts
+     WHERE (LOWER(COALESCE(name, '')) LIKE LOWER(?)
         OR LOWER(COALESCE(notify, '')) LIKE LOWER(?)
         OR LOWER(COALESCE(verified_name, '')) LIKE LOWER(?)
         OR LOWER(id) LIKE LOWER(?)
-        OR LOWER(COALESCE(phone_jid, '')) LIKE LOWER(?)
+        OR LOWER(COALESCE(phone_jid, '')) LIKE LOWER(?))${acFilter}
      LIMIT 50`,
-    [pattern, pattern, pattern, pattern, pattern]
+    [pattern, pattern, pattern, pattern, pattern, ...acParams]
   );
 
   const fromChats = queryAll(
-    `SELECT DISTINCT jid, name FROM chats
+    `SELECT DISTINCT jid, account_id, name FROM chats
      WHERE (LOWER(name) LIKE LOWER(?) OR LOWER(jid) LIKE LOWER(?))
-       AND jid NOT LIKE '%@g.us'
+       AND jid NOT LIKE '%@g.us'${acFilter}
      ORDER BY name, jid
      LIMIT 50`,
-    [pattern, pattern]
+    [pattern, pattern, ...acParams]
   );
 
-  // Deduplicate by JID
+  // Deduplicate by JID+account
   const seen = new Set<string>();
   const results: ContactDict[] = [];
 
   for (const r of fromContacts) {
     const jid = r.phone_jid ?? r.id;
-    if (seen.has(jid)) continue;
-    seen.add(jid);
-    results.push({
+    const key = `${jid}:${r.account_id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const dict: ContactDict = {
       phone_number: (r.phone_jid ?? r.id).split("@")[0],
       name: r.name ?? r.notify ?? r.verified_name ?? null,
       jid: r.phone_jid ?? r.id,
-    });
+    };
+    if (r.account_id) dict.account_id = r.account_id;
+    results.push(dict);
   }
 
   for (const r of fromChats) {
-    if (seen.has(r.jid)) continue;
-    seen.add(r.jid);
-    results.push({
+    const key = `${r.jid}:${r.account_id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const dict: ContactDict = {
       phone_number: (r.jid as string).split("@")[0],
-      name: r.name ?? resolveContactName(r.jid) ?? null,
+      name: r.name ?? resolveContactName(r.jid, r.account_id) ?? null,
       jid: r.jid,
-    });
+    };
+    if (r.account_id) dict.account_id = r.account_id;
+    results.push(dict);
   }
 
   return results;
