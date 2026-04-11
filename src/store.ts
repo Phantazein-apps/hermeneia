@@ -139,6 +139,11 @@ export function upsertContact(opts: {
   }
 }
 
+/** Get all chat JIDs for batch contact resolution */
+export function getAllChatJids(): string[] {
+  return queryAll("SELECT jid FROM chats").map((r) => r.jid as string);
+}
+
 /** Diagnostic: return DB stats for debugging contact resolution */
 export function getStoreDiagnostics(): any {
   const chatCount = queryOne("SELECT COUNT(*) as n FROM chats");

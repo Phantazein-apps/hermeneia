@@ -11,6 +11,8 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   downloadMediaMessage,
+  USyncQuery,
+  USyncUser,
   type WASocket,
 } from "@whiskeysockets/baileys";
 import type { proto } from "@whiskeysockets/baileys";
@@ -258,7 +260,11 @@ export class WhatsAppBridge extends EventEmitter {
         log(`  → extracted ${pushNamesFound} push names from history messages`);
       }
 
-      if (isLatest) log("History sync complete");
+      if (isLatest) {
+        log("History sync complete — resolving contact names...");
+        // Give Baileys a moment to stabilize, then actively query names
+        setTimeout(() => this.resolveContactNames(), 3000);
+      }
     });
   }
 
@@ -421,6 +427,55 @@ export class WhatsAppBridge extends EventEmitter {
     // Strip non-digits and build JID
     const digits = recipient.replace(/\D/g, "");
     return `${digits}@s.whatsapp.net`;
+  }
+
+  /** Actively query WhatsApp servers for contact push names */
+  async resolveContactNames(): Promise<void> {
+    if (!this.sock) return;
+
+    // Get all unique chat JIDs from the DB
+    const { getAllChatJids } = await import("./store.js");
+    const jids = getAllChatJids().filter(j => !j.endsWith("@g.us") && j !== "0@s.whatsapp.net");
+
+    if (jids.length === 0) return;
+    log(`Resolving names for ${jids.length} contacts via USyncQuery...`);
+
+    try {
+      // Query in batches of 20 to avoid rate limits
+      for (let i = 0; i < jids.length; i += 20) {
+        const batch = jids.slice(i, i + 20);
+        const query = new USyncQuery()
+          .withContactProtocol()
+          .withStatusProtocol();
+
+        for (const jid of batch) {
+          query.withUser(new USyncUser().withId(jid));
+        }
+
+        const result = await this.sock.executeUSyncQuery(query);
+        debugLog("USyncQuery result", result);
+
+        if (result?.list) {
+          for (const entry of result.list) {
+            const id = entry.id;
+            if (!id) continue;
+            // Extract any available name info from the query result
+            const status = entry.status as any;
+            const contact = entry.contact;
+            debugLog("USyncQuery entry", { id, status, contact, allKeys: Object.keys(entry) });
+
+            // Status might contain push name or other info
+            if (status?.status) {
+              upsertContact({ id, notify: null }); // at least register the contact
+            }
+          }
+        }
+      }
+      log("USyncQuery complete");
+    } catch (err: any) {
+      log(`USyncQuery failed: ${err.message}`);
+      debugLog("USyncQuery error", err.message);
+    }
   }
 
   async stop(): Promise<void> {

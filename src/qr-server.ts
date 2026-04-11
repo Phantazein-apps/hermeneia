@@ -4,6 +4,8 @@
 // in a browser instead of the terminal. Auto-opens on first run.
 
 import { createServer, type Server } from "http";
+import { existsSync } from "fs";
+import { join } from "path";
 import QRCode from "qrcode";
 import type { WhatsAppBridge } from "./bridge.js";
 
@@ -167,7 +169,7 @@ async function applyQR(qrString: string): Promise<void> {
   }
 }
 
-export function startQRServer(bridge: WhatsAppBridge, port = 3456, initialQr?: string): void {
+export function startQRServer(bridge: WhatsAppBridge, port = 3456, initialQr?: string, dataDir?: string): void {
   // If already running, just update the QR (WhatsApp refreshes every ~20s)
   if (server) {
     if (initialQr) applyQR(initialQr);
@@ -217,8 +219,13 @@ export function startQRServer(bridge: WhatsAppBridge, port = 3456, initialQr?: s
     log(`Setup page: http://localhost:${port}/setup`);
   });
 
-  // Try to auto-open the browser
-  openBrowser(`http://localhost:${port}/setup`);
+  // Only auto-open browser on first-time setup (no existing auth)
+  const hasExistingAuth = dataDir && existsSync(join(dataDir, "auth", "creds.json"));
+  if (!hasExistingAuth) {
+    openBrowser(`http://localhost:${port}/setup`);
+  } else {
+    log("QR generated during reconnect — not auto-opening browser (auth exists)");
+  }
 }
 
 export function stopQRServer(): void {

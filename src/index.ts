@@ -47,7 +47,7 @@ async function main() {
 
   bridge.on("qr", (qr: string) => {
     // QR generated — ensure the setup page is running, pass QR string immediately
-    startQRServer(bridge, qrPort, qr);
+    startQRServer(bridge, qrPort, qr, dataDir);
   });
 
   bridge.on("connected", () => {
