@@ -1,57 +1,44 @@
-// Hermeneia — WhatsApp bridge via Baileys
+// Hermeneia — WhatsApp bridge via Go/whatsmeow subprocess
 //
-// Single-process WhatsApp Web connection with:
-// - QR code auth (served via local HTTP page, not terminal)
-// - Message storage to SQLite
-// - Send/receive/media support
+// Spawns a compiled Go binary that handles WhatsApp Web connection,
+// auth, history sync, and contact resolution. Communicates via
+// newline-delimited JSON over stdin/stdout.
 
-import makeWASocket, {
-  DisconnectReason,
-  useMultiFileAuthState,
-  fetchLatestBaileysVersion,
-  makeCacheableSignalKeyStore,
-  downloadMediaMessage,
-  USyncQuery,
-  USyncUser,
-  type WASocket,
-} from "@whiskeysockets/baileys";
-import type { proto } from "@whiskeysockets/baileys";
-import { mkdirSync, appendFileSync } from "fs";
-import { join } from "path";
+import { spawn, type ChildProcess } from "child_process";
+import { createReadStream } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 import { EventEmitter } from "events";
-import { upsertChat, storeMessage, upsertContact, getAllChatJids } from "./store.js";
+import { createInterface } from "readline";
+import { upsertChat, storeMessage, upsertContact } from "./store.js";
 import type { BridgeStatus } from "./types.js";
 
-// Re-export the socket type for tools.ts
-export type { WASocket };
-
+const __dirname = dirname(fileURLToPath(import.meta.url));
 const log = (msg: string) => console.error(`[hermeneia] ${msg}`);
 
-let debugLogPath: string | null = null;
-function debugLog(label: string, data: any): void {
-  if (!debugLogPath) return;
-  try {
-    const line = `[${new Date().toISOString()}] ${label}: ${JSON.stringify(data, null, 2)}\n`;
-    appendFileSync(debugLogPath, line);
-  } catch {}
+// Platform-specific binary name
+function getBinaryName(): string {
+  const platform = process.platform === "win32" ? "windows" : process.platform;
+  const arch = process.arch === "x64" ? "amd64" : process.arch;
+  const ext = process.platform === "win32" ? ".exe" : "";
+  return `hermeneia-bridge-${platform}-${arch}${ext}`;
 }
 
 export class WhatsAppBridge extends EventEmitter {
-  private sock: WASocket | null = null;
+  private proc: ChildProcess | null = null;
   private dataDir: string;
-  private authDir: string;
   private _connected = false;
   private _authenticated = false;
   private _currentQR: string | null = null;
-  private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingRequests = new Map<
+    string,
+    { resolve: (v: any) => void; reject: (e: Error) => void }
+  >();
+  private reqCounter = 0;
 
   constructor(dataDir: string) {
     super();
     this.dataDir = dataDir;
-    this.authDir = join(dataDir, "auth");
-    mkdirSync(this.authDir, { recursive: true });
-    mkdirSync(join(dataDir, "media"), { recursive: true });
-    debugLogPath = join(dataDir, "debug.log");
   }
 
   get status(): BridgeStatus {
@@ -62,12 +49,13 @@ export class WhatsAppBridge extends EventEmitter {
     };
   }
 
-  get socket(): WASocket | null {
-    return this.sock;
-  }
-
   get isConnected(): boolean {
     return this._connected && this._authenticated;
+  }
+
+  // Kept for API compatibility (qr-server uses it)
+  get socket(): null {
+    return null;
   }
 
   private qrPort = 3456;
@@ -77,305 +65,211 @@ export class WhatsAppBridge extends EventEmitter {
   }
 
   async start(): Promise<void> {
-    const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
-    const { version } = await fetchLatestBaileysVersion();
+    // Find the Go binary — check next to bundle first, then project root
+    let binaryPath: string;
+    const platformBinary = getBinaryName();
+    const genericBinary = "hermeneia-bridge";
 
-    log(`Connecting to WhatsApp Web v${version.join(".")}...`);
+    // Try platform-specific name first, then generic
+    for (const name of [platformBinary, genericBinary]) {
+      const candidate = join(__dirname, name);
+      try {
+        const { accessSync } = await import("fs");
+        accessSync(candidate);
+        binaryPath = candidate;
+        break;
+      } catch {}
+    }
 
-    this.sock = makeWASocket({
-      version,
-      auth: {
-        creds: state.creds,
-        keys: makeCacheableSignalKeyStore(state.keys, undefined as any),
-      },
-      browser: ["Hermeneia for Claude", "Desktop", "1.0.0"],
-      printQRInTerminal: false, // We serve QR via HTTP instead
-      generateHighQualityLinkPreview: false,
-      syncFullHistory: true,
+    if (!binaryPath!) {
+      // Fallback: check if go-bridge was built in project root (dev mode)
+      const devPath = join(__dirname, "..", "dist", genericBinary);
+      try {
+        const { accessSync } = await import("fs");
+        accessSync(devPath);
+        binaryPath = devPath;
+      } catch {
+        throw new Error(
+          `Go bridge binary not found. Looked for:\n` +
+            `  ${join(__dirname, platformBinary)}\n` +
+            `  ${join(__dirname, genericBinary)}\n` +
+            `  ${devPath}`
+        );
+      }
+    }
+
+    log(`Starting Go bridge: ${binaryPath}`);
+    log(`Data directory: ${this.dataDir}`);
+
+    this.proc = spawn(binaryPath, [this.dataDir], {
+      stdio: ["pipe", "pipe", "pipe"],
     });
 
-    // ── Auth events ────────────────────────────────────────────────
-
-    this.sock.ev.on("creds.update", saveCreds);
-
-    this.sock.ev.on("connection.update", (update) => {
-      const { connection, lastDisconnect, qr } = update;
-
-      if (qr) {
-        this._currentQR = qr;
-        this._authenticated = false;
-        this.emit("qr", qr);
-        log("QR code generated — open the setup page to scan");
+    // Parse JSON events from Go binary's stdout
+    const rl = createInterface({ input: this.proc.stdout! });
+    rl.on("line", (line) => {
+      try {
+        const evt = JSON.parse(line);
+        this.handleEvent(evt);
+      } catch (err) {
+        log(`Invalid JSON from bridge: ${line}`);
       }
+    });
 
-      if (connection === "open") {
+    // Forward stderr (Go bridge logs) to our stderr
+    this.proc.stderr?.on("data", (data: Buffer) => {
+      const text = data.toString().trim();
+      if (text) console.error(text);
+    });
+
+    this.proc.on("exit", (code) => {
+      log(`Go bridge exited with code ${code}`);
+      this._connected = false;
+      if (code !== 0 && code !== null) {
+        this.emit("error", new Error(`Bridge process exited with code ${code}`));
+      }
+    });
+
+    this.proc.on("error", (err) => {
+      log(`Go bridge spawn error: ${err.message}`);
+    });
+  }
+
+  private handleEvent(evt: any): void {
+    switch (evt.type) {
+      case "qr":
+        this._currentQR = evt.data;
+        this._authenticated = false;
+        this.emit("qr", evt.data);
+        log("QR code generated — open the setup page to scan");
+        break;
+
+      case "connected":
         this._connected = true;
         this._authenticated = true;
         this._currentQR = null;
         this.emit("connected");
         log("Connected to WhatsApp!");
+        break;
 
-        // Wait for history sync to populate chats, then resolve names
-        setTimeout(() => {
-          log("Triggering contact name resolution...");
-          this.resolveContactNames().catch(err => {
-            log(`Contact name resolution failed: ${err.message}`);
-            debugLog("resolveContactNames error", err.message);
-          });
-        }, 10_000);
-      }
-
-      if (connection === "close") {
+      case "logged_out":
         this._connected = false;
-        const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
-        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+        this._authenticated = false;
+        this._currentQR = null;
+        this.emit("logged_out");
+        log("Logged out — restart to re-authenticate");
+        break;
 
-        if (statusCode === DisconnectReason.loggedOut) {
-          this._authenticated = false;
-          this._currentQR = null;
-          this.emit("logged_out");
-          log("Logged out — restart to re-authenticate");
-        } else if (shouldReconnect) {
-          log(`Disconnected (code ${statusCode}), reconnecting in 5s...`);
-          this._reconnectTimer = setTimeout(() => this.start(), 5000);
+      case "message": {
+        const timestamp = evt.timestamp;
+        const chatJid = evt.chat_jid;
+        const sender = evt.sender;
+        const isFromMe = evt.is_from_me ?? false;
+        const content = evt.content ?? "";
+        const mediaType = evt.media_type ?? null;
+        const messageId = evt.id;
+        const pushName = evt.push_name ?? null;
+
+        // Update chat
+        upsertChat(chatJid, null, timestamp);
+
+        // Store message
+        if (content || mediaType) {
+          storeMessage(
+            messageId,
+            chatJid,
+            sender,
+            content,
+            timestamp,
+            isFromMe,
+            mediaType,
+            null
+          );
         }
-      }
-    });
 
-    // ── Message events ─────────────────────────────────────────────
-
-    this.sock.ev.on("messages.upsert", ({ messages, type }) => {
-      // "notify" = new real-time message; "append" = history sync batch
-      if (type !== "notify" && type !== "append") return;
-
-      for (const msg of messages) {
-        this.handleIncomingMessage(msg);
-      }
-    });
-
-    // ── Chat / contact events ───────────────────────────────────────
-
-    this.sock.ev.on("chats.upsert", (chats) => {
-      for (const chat of chats) {
-        const name = chat.name ?? null;
-        const ts = chat.conversationTimestamp
-          ? new Date((chat.conversationTimestamp as number) * 1000).toISOString()
-          : new Date().toISOString();
-        upsertChat(chat.id, name, ts);
-      }
-    });
-
-    this.sock.ev.on("contacts.upsert", (contacts) => {
-      debugLog("contacts.upsert", contacts.slice(0, 5).map(c => ({
-        id: c.id, lid: (c as any).lid, jid: (c as any).jid,
-        name: c.name, notify: c.notify, verifiedName: c.verifiedName,
-        allKeys: Object.keys(c),
-      })));
-      log(`contacts.upsert: ${contacts.length} contacts`);
-      for (const contact of contacts) {
-        if (!contact.id) continue;
-        upsertContact({
-          id: contact.id,
-          lid: (contact as any).lid ?? null,
-          phoneJid: (contact as any).jid ?? null,
-          name: contact.name ?? null,
-          notify: contact.notify ?? null,
-          verifiedName: contact.verifiedName ?? null,
+        this.emit("message", {
+          id: messageId,
+          chatJid,
+          sender,
+          content,
+          isFromMe,
+          timestamp,
+          mediaType,
+          pushName,
         });
+        break;
       }
-    });
 
-    this.sock.ev.on("contacts.update", (updates) => {
-      debugLog("contacts.update", updates.slice(0, 5).map(c => ({
-        id: c.id, lid: (c as any).lid, jid: (c as any).jid,
-        name: c.name, notify: c.notify, verifiedName: c.verifiedName,
-        allKeys: Object.keys(c),
-      })));
-      log(`contacts.update: ${updates.length} contacts`);
-      for (const contact of updates) {
-        if (!contact.id) continue;
+      case "chat":
+        upsertChat(evt.jid, evt.name || null, evt.last_message_time);
+        break;
+
+      case "contact":
         upsertContact({
-          id: contact.id,
-          lid: (contact as any).lid ?? null,
-          phoneJid: (contact as any).jid ?? null,
-          name: contact.name ?? null,
-          notify: contact.notify ?? null,
-          verifiedName: contact.verifiedName ?? null,
+          id: evt.id,
+          lid: evt.lid || null,
+          phoneJid: evt.phone_jid || null,
+          name: evt.name || null,
+          notify: evt.notify || null,
+          verifiedName: evt.verified_name ?? null,
         });
-      }
-    });
+        break;
 
-    // ── History sync (fires on first connect with recent conversations) ──
+      case "contacts_ready":
+        log(`Contacts ready: ${evt.count} contacts loaded`);
+        break;
 
-    this.sock.ev.on("messaging-history.set", (data) => {
-      const { chats, messages, contacts, isLatest } = data;
-      const syncType = (data as any).syncType;
-      log(`History sync [type=${syncType}]: ${chats.length} chats, ${messages.length} msgs, ${contacts.length} contacts`);
+      case "error":
+        log(`Bridge error: ${evt.message}`);
+        break;
 
-      // Count how many contacts have names
-      const namedContacts = contacts.filter(c => c.notify || c.name || c.verifiedName);
-      if (namedContacts.length > 0) {
-        log(`  → ${namedContacts.length}/${contacts.length} contacts have names`);
-      }
-
-      debugLog(`messaging-history.set[type=${syncType}]`, {
-        chats: chats.length,
-        messages: messages.length,
-        contacts: contacts.length,
-        namedContacts: namedContacts.length,
-        sampleContacts: contacts.slice(0, 3).map(c => ({
-          id: c.id, lid: (c as any).lid, jid: (c as any).jid,
-          name: c.name, notify: c.notify, verifiedName: c.verifiedName,
-        })),
-        sampleChats: chats.slice(0, 3).map(c => ({
-          id: c.id, name: c.name,
-        })),
-      });
-
-      // Contacts first — build name map before processing chats/messages
-      for (const contact of contacts) {
-        if (!contact.id) continue;
-        upsertContact({
-          id: contact.id,
-          lid: (contact as any).lid ?? null,
-          phoneJid: (contact as any).jid ?? null,
-          name: contact.name ?? null,
-          notify: contact.notify ?? null,
-          verifiedName: contact.verifiedName ?? null,
-        });
-      }
-
-      for (const chat of chats) {
-        const name = chat.name ?? null;
-        const ts = chat.conversationTimestamp
-          ? new Date((chat.conversationTimestamp as number) * 1000).toISOString()
-          : new Date().toISOString();
-        upsertChat(chat.id, name, ts);
-      }
-
-      // Extract pushNames from history messages — Baileys doesn't do this
-      // for us (it only processes PUSH_NAME sync type, which arrives later).
-      // This is our best chance to get names from the initial sync.
-      let pushNamesFound = 0;
-      for (const msg of messages) {
-        if (msg.pushName && msg.key?.remoteJid) {
-          const sender = msg.key.participant ?? msg.key.remoteJid;
-          upsertContact({ id: sender, notify: msg.pushName });
-          pushNamesFound++;
+      case "response": {
+        const pending = this.pendingRequests.get(evt.req_id);
+        if (pending) {
+          this.pendingRequests.delete(evt.req_id);
+          pending.resolve({
+            success: evt.success,
+            message: evt.message ?? (evt.success ? "OK" : "Failed"),
+          });
         }
-        this.handleIncomingMessage(msg);
+        break;
       }
-      if (pushNamesFound > 0) {
-        log(`  → extracted ${pushNamesFound} push names from history messages`);
-      }
-
-      if (isLatest) log("History sync complete");
-    });
-  }
-
-  private handleIncomingMessage(msg: proto.IWebMessageInfo): void {
-    if (!msg.key?.remoteJid || !msg.message) return;
-
-    const chatJid = msg.key.remoteJid;
-    const sender = msg.key.participant ?? msg.key.remoteJid;
-    const isFromMe = msg.key.fromMe ?? false;
-    const timestamp = new Date(
-      (msg.messageTimestamp as number) * 1000
-    ).toISOString();
-    const messageId = msg.key.id ?? `${Date.now()}`;
-
-    // Extract text content
-    const content = this.extractText(msg.message);
-
-    // Extract media info
-    const { mediaType, filename } = this.extractMediaInfo(msg.message);
-
-    // Skip if no content and no media
-    if (!content && !mediaType) return;
-
-    // Get push name for contact resolution
-    const pushName = msg.pushName ?? null;
-    const chatName =
-      pushName && !chatJid.endsWith("@g.us") ? pushName : null;
-
-    // Store chat
-    upsertChat(chatJid, chatName, timestamp);
-
-    // Store push name as contact info (works for both LIDs and phone JIDs)
-    if (pushName && sender) {
-      upsertContact({ id: sender, notify: pushName });
     }
-
-    // Store message
-    storeMessage(
-      messageId,
-      chatJid,
-      sender,
-      content,
-      timestamp,
-      isFromMe,
-      mediaType,
-      filename
-    );
-
-    this.emit("message", {
-      id: messageId,
-      chatJid,
-      sender,
-      content,
-      isFromMe,
-      timestamp,
-      mediaType,
-      pushName,
-    });
-  }
-
-  private extractText(message: proto.IMessage): string {
-    if (message.conversation) return message.conversation;
-    if (message.extendedTextMessage?.text)
-      return message.extendedTextMessage.text;
-    if (message.imageMessage?.caption) return message.imageMessage.caption;
-    if (message.videoMessage?.caption) return message.videoMessage.caption;
-    if (message.documentMessage?.caption)
-      return message.documentMessage.caption;
-    return "";
-  }
-
-  private extractMediaInfo(message: proto.IMessage): {
-    mediaType: string | null;
-    filename: string | null;
-  } {
-    if (message.imageMessage)
-      return { mediaType: "image", filename: "image.jpg" };
-    if (message.videoMessage)
-      return { mediaType: "video", filename: "video.mp4" };
-    if (message.audioMessage)
-      return { mediaType: "audio", filename: "audio.ogg" };
-    if (message.documentMessage)
-      return {
-        mediaType: "document",
-        filename: message.documentMessage.fileName ?? "document",
-      };
-    return { mediaType: null, filename: null };
   }
 
   // ── Public actions (called by MCP tools) ───────────────────────
+
+  private sendCommand(cmd: any): Promise<{ success: boolean; message: string }> {
+    return new Promise((resolve, reject) => {
+      if (!this.proc || !this.proc.stdin) {
+        resolve({ success: false, message: "Bridge process not running" });
+        return;
+      }
+
+      const id = `req_${++this.reqCounter}`;
+      cmd.id = id;
+      this.pendingRequests.set(id, { resolve, reject });
+
+      this.proc.stdin.write(JSON.stringify(cmd) + "\n");
+
+      // Timeout after 30 seconds
+      setTimeout(() => {
+        if (this.pendingRequests.has(id)) {
+          this.pendingRequests.delete(id);
+          resolve({ success: false, message: "Command timed out" });
+        }
+      }, 30_000);
+    });
+  }
 
   async sendMessage(
     recipient: string,
     text: string
   ): Promise<{ success: boolean; message: string }> {
-    if (!this.sock || !this.isConnected) {
+    if (!this.isConnected) {
       return { success: false, message: "Not connected to WhatsApp" };
     }
-
-    try {
-      const jid = this.normalizeJid(recipient);
-      await this.sock.sendMessage(jid, { text });
-      return { success: true, message: "Message sent successfully" };
-    } catch (err: any) {
-      return { success: false, message: `Send failed: ${err.message}` };
-    }
+    return this.sendCommand({ cmd: "send_message", recipient, text });
   }
 
   async sendFile(
@@ -383,109 +277,28 @@ export class WhatsAppBridge extends EventEmitter {
     filePath: string,
     caption?: string
   ): Promise<{ success: boolean; message: string }> {
-    if (!this.sock || !this.isConnected) {
+    if (!this.isConnected) {
       return { success: false, message: "Not connected to WhatsApp" };
     }
-
-    try {
-      const { readFileSync } = await import("fs");
-      const jid = this.normalizeJid(recipient);
-      const data = readFileSync(filePath);
-      const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
-
-      let msgContent: any;
-      if (["jpg", "jpeg", "png", "gif", "webp"].includes(ext)) {
-        msgContent = { image: data, caption };
-      } else if (["mp4", "avi", "mov"].includes(ext)) {
-        msgContent = { video: data, caption };
-      } else if (["ogg"].includes(ext)) {
-        msgContent = { audio: data, mimetype: "audio/ogg; codecs=opus", ptt: true };
-      } else {
-        msgContent = {
-          document: data,
-          fileName: filePath.split("/").pop(),
-          caption,
-        };
-      }
-
-      await this.sock.sendMessage(jid, msgContent);
-      return { success: true, message: "File sent successfully" };
-    } catch (err: any) {
-      return { success: false, message: `Send file failed: ${err.message}` };
-    }
-  }
-
-  async downloadMedia(
-    msg: proto.IWebMessageInfo
-  ): Promise<Buffer | null> {
-    if (!this.sock) return null;
-    try {
-      const buffer = await downloadMediaMessage(msg, "buffer", {});
-      return buffer as Buffer;
-    } catch {
-      return null;
-    }
-  }
-
-  private normalizeJid(recipient: string): string {
-    if (recipient.includes("@")) return recipient;
-    // Strip non-digits and build JID
-    const digits = recipient.replace(/\D/g, "");
-    return `${digits}@s.whatsapp.net`;
-  }
-
-  /** Actively query WhatsApp servers for contact push names */
-  async resolveContactNames(): Promise<void> {
-    if (!this.sock) return;
-
-    const jids = getAllChatJids().filter(j => !j.endsWith("@g.us") && j !== "0@s.whatsapp.net");
-
-    if (jids.length === 0) return;
-    log(`Resolving names for ${jids.length} contacts via USyncQuery...`);
-
-    try {
-      // Query in batches of 20 to avoid rate limits
-      for (let i = 0; i < jids.length; i += 20) {
-        const batch = jids.slice(i, i + 20);
-        const query = new USyncQuery()
-          .withContactProtocol()
-          .withStatusProtocol();
-
-        for (const jid of batch) {
-          query.withUser(new USyncUser().withId(jid));
-        }
-
-        const result = await this.sock.executeUSyncQuery(query);
-        debugLog("USyncQuery result", result);
-
-        if (result?.list) {
-          for (const entry of result.list) {
-            const id = entry.id;
-            if (!id) continue;
-            // Extract any available name info from the query result
-            const status = entry.status as any;
-            const contact = entry.contact;
-            debugLog("USyncQuery entry", { id, status, contact, allKeys: Object.keys(entry) });
-
-            // Status might contain push name or other info
-            if (status?.status) {
-              upsertContact({ id, notify: null }); // at least register the contact
-            }
-          }
-        }
-      }
-      log("USyncQuery complete");
-    } catch (err: any) {
-      log(`USyncQuery failed: ${err.message}`);
-      debugLog("USyncQuery error", err.message);
-    }
+    return this.sendCommand({
+      cmd: "send_file",
+      recipient,
+      path: filePath,
+      caption: caption ?? "",
+    });
   }
 
   async stop(): Promise<void> {
-    if (this._reconnectTimer) clearTimeout(this._reconnectTimer);
-    if (this.sock) {
-      this.sock.end(undefined);
-      this.sock = null;
+    if (this.proc) {
+      try {
+        this.proc.stdin?.write(JSON.stringify({ cmd: "stop" }) + "\n");
+      } catch {}
+      // Give it a moment to shut down gracefully
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      if (this.proc && !this.proc.killed) {
+        this.proc.kill();
+      }
+      this.proc = null;
     }
     this._connected = false;
   }

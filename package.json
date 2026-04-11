@@ -1,6 +1,6 @@
 {
   "name": "hermeneia",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "WhatsApp bridge for Claude — drag, scan, chat. Zero dependencies.",
   "author": "Phantazein S.L.",
   "license": "MIT",
@@ -15,7 +15,6 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
-    "@whiskeysockets/baileys": "^6.7.21",
     "open": "^10.1.0",
     "qrcode": "^1.5.4",
     "sql.js": "^1.11.0"
