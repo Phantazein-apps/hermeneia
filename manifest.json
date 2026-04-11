@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "hermeneia",
   "display_name": "WhatsApp (Hermeneia)",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Read, search, and send WhatsApp messages from Claude. Drag to install, scan a QR code, and you're done.",
   "author": {
     "name": "Phantazein S.L."
@@ -46,7 +46,10 @@
     { "name": "get_direct_chat_by_contact", "description": "Find a DM chat with a contact" },
     { "name": "get_contact_chats", "description": "List all chats involving a contact" },
     { "name": "get_last_interaction", "description": "Get the last message with a contact" },
-    { "name": "get_message_context", "description": "Get messages around a specific message" }
+    { "name": "get_message_context", "description": "Get messages around a specific message" },
+    { "name": "list_accounts", "description": "List all connected WhatsApp accounts" },
+    { "name": "add_account", "description": "Connect a new WhatsApp account via QR code" },
+    { "name": "remove_account", "description": "Disconnect and remove a WhatsApp account" }
   ],
   "compatibility": {
     "claude_desktop": ">=1.0.0",
