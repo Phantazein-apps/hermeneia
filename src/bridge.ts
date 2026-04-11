@@ -19,7 +19,7 @@ import type { proto } from "@whiskeysockets/baileys";
 import { mkdirSync, appendFileSync } from "fs";
 import { join } from "path";
 import { EventEmitter } from "events";
-import { upsertChat, storeMessage, upsertContact } from "./store.js";
+import { upsertChat, storeMessage, upsertContact, getAllChatJids } from "./store.js";
 import type { BridgeStatus } from "./types.js";
 
 // Re-export the socket type for tools.ts
@@ -114,6 +114,15 @@ export class WhatsAppBridge extends EventEmitter {
         this._currentQR = null;
         this.emit("connected");
         log("Connected to WhatsApp!");
+
+        // Wait for history sync to populate chats, then resolve names
+        setTimeout(() => {
+          log("Triggering contact name resolution...");
+          this.resolveContactNames().catch(err => {
+            log(`Contact name resolution failed: ${err.message}`);
+            debugLog("resolveContactNames error", err.message);
+          });
+        }, 10_000);
       }
 
       if (connection === "close") {
@@ -260,11 +269,7 @@ export class WhatsAppBridge extends EventEmitter {
         log(`  → extracted ${pushNamesFound} push names from history messages`);
       }
 
-      if (isLatest) {
-        log("History sync complete — resolving contact names...");
-        // Give Baileys a moment to stabilize, then actively query names
-        setTimeout(() => this.resolveContactNames(), 3000);
-      }
+      if (isLatest) log("History sync complete");
     });
   }
 
@@ -433,8 +438,6 @@ export class WhatsAppBridge extends EventEmitter {
   async resolveContactNames(): Promise<void> {
     if (!this.sock) return;
 
-    // Get all unique chat JIDs from the DB
-    const { getAllChatJids } = await import("./store.js");
     const jids = getAllChatJids().filter(j => !j.endsWith("@g.us") && j !== "0@s.whatsapp.net");
 
     if (jids.length === 0) return;
