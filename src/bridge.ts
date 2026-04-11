@@ -79,7 +79,7 @@ export class WhatsAppBridge extends EventEmitter {
       browser: ["Hermeneia for Claude", "Desktop", "1.0.0"],
       printQRInTerminal: false, // We serve QR via HTTP instead
       generateHighQualityLinkPreview: false,
-      syncFullHistory: false,
+      syncFullHistory: true,
     });
 
     // ── Auth events ────────────────────────────────────────────────
@@ -124,19 +124,23 @@ export class WhatsAppBridge extends EventEmitter {
     // ── Message events ─────────────────────────────────────────────
 
     this.sock.ev.on("messages.upsert", ({ messages, type }) => {
-      if (type !== "notify") return;
+      // "notify" = new real-time message; "append" = history sync batch
+      if (type !== "notify" && type !== "append") return;
 
       for (const msg of messages) {
         this.handleIncomingMessage(msg);
       }
     });
 
-    // ── Chat events ────────────────────────────────────────────────
+    // ── Chat / contact events ───────────────────────────────────────
 
     this.sock.ev.on("chats.upsert", (chats) => {
       for (const chat of chats) {
         const name = chat.name ?? chat.id?.split("@")[0] ?? null;
-        upsertChat(chat.id, name, new Date().toISOString());
+        const ts = chat.conversationTimestamp
+          ? new Date((chat.conversationTimestamp as number) * 1000).toISOString()
+          : new Date().toISOString();
+        upsertChat(chat.id, name, ts);
       }
     });
 
@@ -146,6 +150,32 @@ export class WhatsAppBridge extends EventEmitter {
           upsertChat(contact.id, contact.name, new Date().toISOString());
         }
       }
+    });
+
+    // ── History sync (fires on first connect with recent conversations) ──
+
+    this.sock.ev.on("messaging-history.set", ({ chats, messages, contacts, isLatest }) => {
+      log(`History sync: ${chats.length} chats, ${messages.length} messages, ${contacts.length} contacts`);
+
+      for (const contact of contacts) {
+        if (contact.id && contact.notify) {
+          upsertChat(contact.id, contact.notify, new Date().toISOString());
+        }
+      }
+
+      for (const chat of chats) {
+        const name = chat.name ?? chat.id?.split("@")[0] ?? null;
+        const ts = chat.conversationTimestamp
+          ? new Date((chat.conversationTimestamp as number) * 1000).toISOString()
+          : new Date().toISOString();
+        upsertChat(chat.id, name, ts);
+      }
+
+      for (const msg of messages) {
+        this.handleIncomingMessage(msg);
+      }
+
+      if (isLatest) log("History sync complete");
     });
   }
 
