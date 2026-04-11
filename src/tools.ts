@@ -250,6 +250,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
           description:
             "Check WhatsApp connection status. If not connected, returns instructions to authenticate.",
           inputSchema: { type: "object", properties: {} },
+          annotations: { readOnlyHint: true, openWorldHint: false },
         },
         {
           name: "search_contacts",
@@ -264,6 +265,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
             },
             required: ["query"],
           },
+          annotations: { readOnlyHint: true, openWorldHint: false },
         },
         {
           name: "get_contact",
@@ -280,6 +282,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
             },
             required: ["identifier"],
           },
+          annotations: { readOnlyHint: true, openWorldHint: false },
         },
         {
           name: "list_messages",
@@ -314,6 +317,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
               },
             },
           },
+          annotations: { readOnlyHint: true, openWorldHint: false },
         },
         {
           name: "get_message_context",
@@ -333,6 +337,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
             },
             required: ["message_id"],
           },
+          annotations: { readOnlyHint: true, openWorldHint: false },
         },
         {
           name: "send_message",
@@ -350,6 +355,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
             },
             required: ["recipient", "message"],
           },
+          annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
         },
         {
           name: "list_chats",
@@ -371,6 +377,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
               },
             },
           },
+          annotations: { readOnlyHint: true, openWorldHint: false },
         },
         {
           name: "get_chat",
@@ -386,6 +393,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
             },
             required: ["chat_jid"],
           },
+          annotations: { readOnlyHint: true, openWorldHint: false },
         },
         {
           name: "get_direct_chat_by_contact",
@@ -400,6 +408,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
             },
             required: ["sender_phone_number"],
           },
+          annotations: { readOnlyHint: true, openWorldHint: false },
         },
         {
           name: "get_contact_chats",
@@ -413,6 +422,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
             },
             required: ["jid"],
           },
+          annotations: { readOnlyHint: true, openWorldHint: false },
         },
         {
           name: "get_last_interaction",
@@ -424,6 +434,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
             },
             required: ["jid"],
           },
+          annotations: { readOnlyHint: true, openWorldHint: false },
         },
         {
           name: "send_file",
@@ -440,6 +451,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
             },
             required: ["recipient", "media_path"],
           },
+          annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
         },
         {
           name: "send_audio_message",
@@ -456,6 +468,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
             },
             required: ["recipient", "media_path"],
           },
+          annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
         },
         {
           name: "download_media",
@@ -468,6 +481,7 @@ export function registerTools(server: Server, bridge: WhatsAppBridge): void {
             },
             required: ["message_id", "chat_jid"],
           },
+          annotations: { readOnlyHint: true, openWorldHint: false },
         },
       ],
     })

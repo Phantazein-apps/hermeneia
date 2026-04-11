@@ -157,14 +157,16 @@ export class WhatsAppBridge extends EventEmitter {
     this.sock.ev.on("messaging-history.set", ({ chats, messages, contacts, isLatest }) => {
       log(`History sync: ${chats.length} chats, ${messages.length} messages, ${contacts.length} contacts`);
 
+      // Contacts first — build name map before processing chats/messages
       for (const contact of contacts) {
-        if (contact.id && contact.notify) {
-          upsertChat(contact.id, contact.notify, new Date().toISOString());
-        }
+        if (!contact.id) continue;
+        const name = contact.notify ?? contact.name ?? null;
+        if (name) upsertChat(contact.id, name, new Date(0).toISOString());
       }
 
       for (const chat of chats) {
-        const name = chat.name ?? chat.id?.split("@")[0] ?? null;
+        // chat.name is the display name for groups; for DMs it may be absent
+        const name = chat.name ?? null;
         const ts = chat.conversationTimestamp
           ? new Date((chat.conversationTimestamp as number) * 1000).toISOString()
           : new Date().toISOString();
@@ -204,8 +206,11 @@ export class WhatsAppBridge extends EventEmitter {
     const chatName =
       pushName && !chatJid.endsWith("@g.us") ? pushName : null;
 
-    // Store chat
+    // Store chat — also update sender's name entry if we have a push name
     upsertChat(chatJid, chatName, timestamp);
+    if (pushName && sender !== chatJid) {
+      upsertChat(sender, pushName, timestamp);
+    }
 
     // Store message
     storeMessage(
