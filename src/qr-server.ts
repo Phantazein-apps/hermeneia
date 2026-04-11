@@ -126,19 +126,31 @@ const SETUP_HTML = `<!DOCTYPE html>
 </body>
 </html>`;
 
-export function startQRServer(bridge: WhatsAppBridge, port = 3456): void {
-  if (server) return;
+async function applyQR(qrString: string): Promise<void> {
+  try {
+    currentQRDataUrl = await QRCode.toDataURL(qrString, {
+      width: 256,
+      margin: 0,
+      color: { dark: "#000000", light: "#ffffff" },
+    });
+  } catch (err) {
+    log(`QR generation error: ${err}`);
+  }
+}
 
-  bridge.on("qr", async (qrString: string) => {
-    try {
-      currentQRDataUrl = await QRCode.toDataURL(qrString, {
-        width: 256,
-        margin: 0,
-        color: { dark: "#000000", light: "#ffffff" },
-      });
-    } catch (err) {
-      log(`QR generation error: ${err}`);
-    }
+export function startQRServer(bridge: WhatsAppBridge, port = 3456, initialQr?: string): void {
+  // If already running, just update the QR (WhatsApp refreshes every ~20s)
+  if (server) {
+    if (initialQr) applyQR(initialQr);
+    return;
+  }
+
+  // Convert the QR string that triggered this call immediately — don't wait for next event
+  if (initialQr) applyQR(initialQr);
+
+  // Keep updating on subsequent QR refreshes
+  bridge.on("qr", (qrString: string) => {
+    applyQR(qrString);
   });
 
   bridge.on("connected", () => {

@@ -45,9 +45,9 @@ async function main() {
   const bridge = new WhatsAppBridge(dataDir);
   bridge.setQrPort(qrPort);
 
-  bridge.on("qr", () => {
-    // QR generated — ensure the setup page is running
-    startQRServer(bridge, qrPort);
+  bridge.on("qr", (qr: string) => {
+    // QR generated — ensure the setup page is running, pass QR string immediately
+    startQRServer(bridge, qrPort, qr);
   });
 
   bridge.on("connected", () => {
