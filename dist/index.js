@@ -28120,7 +28120,7 @@ import { existsSync as existsSync4, cpSync as cpSync2, mkdirSync as mkdirSync3 }
 import { fileURLToPath as fileURLToPath4 } from "url";
 
 // src/bridge-manager.ts
-import { mkdirSync as mkdirSync2, existsSync as existsSync3, readFileSync as readFileSync2, writeFileSync as writeFileSync2, renameSync, cpSync } from "fs";
+import { mkdirSync as mkdirSync2, existsSync as existsSync3, readFileSync as readFileSync3, writeFileSync as writeFileSync2, renameSync, cpSync } from "fs";
 import { join as join4 } from "path";
 
 // src/bridge.ts
@@ -29039,7 +29039,7 @@ var WhatsAppBridge = class extends EventEmitter {
 // src/qr-server.ts
 var import_qrcode = __toESM(require_lib(), 1);
 import { createServer } from "http";
-import { existsSync as existsSync2 } from "fs";
+import { existsSync as existsSync2, readFileSync as readFileSync2 } from "fs";
 import { join as join3 } from "path";
 var log2 = (msg) => console.error(`[hermeneia:qr] ${msg}`);
 var server = null;
@@ -29287,7 +29287,15 @@ function startQRServer(bridge, port = 3456, initialQr, dataDir2, accountId = "de
       log2(`Setup page: http://localhost:${actualPort}/setup`);
     });
   }
-  const hasExistingAuth = dataDir2 && existsSync2(join3(dataDir2, "whatsmeow.db"));
+  let hasExistingAuth = false;
+  try {
+    const accountsPath = join3(dataDir2, "..", "accounts.json");
+    if (existsSync2(accountsPath)) {
+      const accounts = JSON.parse(readFileSync2(accountsPath, "utf-8"));
+      hasExistingAuth = accounts.some((a) => a.id === accountId && a.phone);
+    }
+  } catch {
+  }
   if (!hasExistingAuth) {
     setTimeout(() => {
       const actualPort = server?.address()?.port ?? port;
@@ -29489,7 +29497,7 @@ var BridgeManager = class {
     const path2 = this.accountsPath();
     if (!existsSync3(path2)) return [];
     try {
-      return JSON.parse(readFileSync2(path2, "utf-8"));
+      return JSON.parse(readFileSync3(path2, "utf-8"));
     } catch {
       return [];
     }
@@ -29500,7 +29508,7 @@ var BridgeManager = class {
 };
 
 // src/tools.ts
-import { readFileSync as readFileSync3 } from "fs";
+import { readFileSync as readFileSync4 } from "fs";
 var accountProp = {
   account: {
     type: "string",
@@ -29733,7 +29741,7 @@ Use the add_account tool to connect a new account, or check if an existing accou
           const mime = mediaInfo?.mimetype ?? guessMime(filePath);
           if (mime.startsWith("image/")) {
             try {
-              const data = readFileSync3(filePath);
+              const data = readFileSync4(filePath);
               const b64 = data.toString("base64");
               return {
                 content: [

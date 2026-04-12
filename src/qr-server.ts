@@ -5,7 +5,7 @@
 // via /setup/{accountId} routes.
 
 import { createServer, type Server } from "http";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import QRCode from "qrcode";
 import type { WhatsAppBridge } from "./bridge.js";
@@ -297,8 +297,19 @@ export function startQRServer(
     });
   }
 
-  // Only auto-open browser on first-time setup (no existing auth)
-  const hasExistingAuth = dataDir && existsSync(join(dataDir, "whatsmeow.db"));
+  // Only auto-open browser on first-time setup.
+  // Check accounts.json for a saved phone number — if present, the account
+  // was previously authenticated (this is a reconnect, don't open browser).
+  // We can't check whatsmeow.db existence because the Go bridge creates it
+  // before generating the QR code.
+  let hasExistingAuth = false;
+  try {
+    const accountsPath = join(dataDir, "..", "accounts.json");
+    if (existsSync(accountsPath)) {
+      const accounts = JSON.parse(readFileSync(accountsPath, "utf-8"));
+      hasExistingAuth = accounts.some((a: any) => a.id === accountId && a.phone);
+    }
+  } catch {}
   if (!hasExistingAuth) {
     // Wait briefly for listen to succeed, then open browser with actual port
     setTimeout(() => {
