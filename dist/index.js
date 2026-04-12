@@ -29413,6 +29413,7 @@ var BridgeManager = class {
 };
 
 // src/tools.ts
+import { readFileSync as readFileSync3 } from "fs";
 var accountProp = {
   account: {
     type: "string",
@@ -29638,13 +29639,27 @@ Use the add_account tool to connect a new account, or check if an existing accou
           const mediaInfoJson = getMessageMediaInfo(messageId, accountId);
           const mediaInfo = mediaInfoJson ? JSON.parse(mediaInfoJson) : void 0;
           const result = await bridge.downloadMedia(messageId, chatJid, mediaInfo);
-          if (result.success) {
-            return json2({
-              message: "Media downloaded successfully",
-              file_path: result.message
-            });
+          if (!result.success) return text(result.message);
+          const filePath = result.message;
+          const mime = mediaInfo?.mimetype ?? guessMime(filePath);
+          if (mime.startsWith("image/")) {
+            try {
+              const data = readFileSync3(filePath);
+              const b64 = data.toString("base64");
+              return {
+                content: [
+                  { type: "image", data: b64, mimeType: mime },
+                  { type: "text", text: `Downloaded to: ${filePath}` }
+                ]
+              };
+            } catch {
+            }
           }
-          return text(result.message);
+          return json2({
+            message: "Media downloaded successfully",
+            file_path: filePath,
+            mime_type: mime
+          });
         }
         default:
           return text(`Unknown tool: ${name}`);
@@ -29950,6 +29965,22 @@ function json2(data) {
   return {
     content: [{ type: "text", text: JSON.stringify(data, null, 2) }]
   };
+}
+function guessMime(filePath) {
+  const ext = filePath.split(".").pop()?.toLowerCase();
+  const map2 = {
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    png: "image/png",
+    gif: "image/gif",
+    webp: "image/webp",
+    mp4: "video/mp4",
+    mov: "video/quicktime",
+    ogg: "audio/ogg",
+    mp3: "audio/mpeg",
+    pdf: "application/pdf"
+  };
+  return map2[ext ?? ""] ?? "application/octet-stream";
 }
 
 // src/index.ts

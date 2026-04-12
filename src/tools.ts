@@ -4,6 +4,7 @@
 // list_accounts, add_account, and remove_account.
 // All tools read from SQLite (store.ts) and send via bridge-manager.ts.
 
+import { readFileSync } from "fs";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   ListToolsRequestSchema,
@@ -307,13 +308,32 @@ export function registerTools(server: Server, manager: BridgeManager): void {
           const mediaInfo = mediaInfoJson ? JSON.parse(mediaInfoJson) : undefined;
 
           const result = await bridge.downloadMedia(messageId, chatJid, mediaInfo);
-          if (result.success) {
-            return json({
-              message: "Media downloaded successfully",
-              file_path: result.message,
-            });
+          if (!result.success) return text(result.message);
+
+          const filePath = result.message;
+          const mime = mediaInfo?.mimetype ?? guessMime(filePath);
+
+          // For images, return inline so Claude can see them
+          if (mime.startsWith("image/")) {
+            try {
+              const data = readFileSync(filePath);
+              const b64 = data.toString("base64");
+              return {
+                content: [
+                  { type: "image" as const, data: b64, mimeType: mime },
+                  { type: "text", text: `Downloaded to: ${filePath}` },
+                ],
+              };
+            } catch {
+              // Fall through to path-only response if read fails
+            }
           }
-          return text(result.message);
+
+          return json({
+            message: "Media downloaded successfully",
+            file_path: filePath,
+            mime_type: mime,
+          });
         }
 
         default:
@@ -639,4 +659,16 @@ function json(data: any) {
   return {
     content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
   };
+}
+
+function guessMime(filePath: string): string {
+  const ext = filePath.split(".").pop()?.toLowerCase();
+  const map: Record<string, string> = {
+    jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png",
+    gif: "image/gif", webp: "image/webp",
+    mp4: "video/mp4", mov: "video/quicktime",
+    ogg: "audio/ogg", mp3: "audio/mpeg",
+    pdf: "application/pdf",
+  };
+  return map[ext ?? ""] ?? "application/octet-stream";
 }
