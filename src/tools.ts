@@ -222,6 +222,7 @@ export function registerTools(server: Server, manager: BridgeManager): void {
               includeLastMessage: args?.include_last_message as boolean | undefined,
               sortBy: args?.sort_by as "last_active" | "name" | undefined,
               unreadOnly: args?.unread_only as boolean | undefined,
+              includeArchived: args?.include_archived as boolean | undefined,
             })
           );
         }
@@ -527,6 +528,10 @@ export function registerTools(server: Server, manager: BridgeManager): void {
               unread_only: {
                 type: "boolean",
                 description: "Only return chats with unread messages",
+              },
+              include_archived: {
+                type: "boolean",
+                description: "Include archived chats (excluded by default)",
               },
               sort_by: {
                 type: "string",

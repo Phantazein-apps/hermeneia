@@ -31,6 +31,9 @@ type Event struct {
 	LastMessageTime string `json:"last_message_time,omitempty"`
 	UnreadCount     *int   `json:"unread_count,omitempty"`
 	MarkedAsUnread  *bool  `json:"marked_as_unread,omitempty"`
+	Archived        *bool  `json:"archived,omitempty"`
+	ParentGroupJID  string `json:"parent_group_jid,omitempty"`
+	IsParentGroup   *bool  `json:"is_parent_group,omitempty"`
 
 	// contact
 	PhoneJID     string  `json:"phone_jid,omitempty"`

@@ -359,6 +359,8 @@ func handleHistorySync(evt *events.HistorySync) {
 
 		unread := int(conv.GetUnreadCount())
 		markedUnread := conv.GetMarkedAsUnread()
+		archived := conv.GetArchived()
+		isParent := conv.GetIsParentGroup()
 
 		emit(Event{
 			Type:            "chat",
@@ -367,6 +369,9 @@ func handleHistorySync(evt *events.HistorySync) {
 			LastMessageTime: ts,
 			UnreadCount:     &unread,
 			MarkedAsUnread:  &markedUnread,
+			Archived:        &archived,
+			ParentGroupJID:  conv.GetParentGroupID(),
+			IsParentGroup:   &isParent,
 		})
 
 		// Process messages in this conversation

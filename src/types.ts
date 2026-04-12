@@ -44,6 +44,9 @@ export interface ChatDict {
   is_group: boolean;
   last_message_time: string | null;
   unread_count?: number;
+  archived?: boolean;
+  parent_group_jid?: string | null;
+  is_parent_group?: boolean;
   last_message: string | null;
   last_sender: string | null;
   last_is_from_me: boolean | null;

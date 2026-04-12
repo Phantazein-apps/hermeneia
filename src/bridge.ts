@@ -244,7 +244,12 @@ export class WhatsAppBridge extends EventEmitter {
       }
 
       case "chat":
-        upsertChat(this._accountId, evt.jid, evt.name || null, evt.last_message_time, evt.unread_count ?? undefined);
+        upsertChat(this._accountId, evt.jid, evt.name || null, evt.last_message_time, {
+          unreadCount: evt.unread_count ?? undefined,
+          archived: evt.archived ?? undefined,
+          parentGroupJid: evt.parent_group_jid || undefined,
+          isParentGroup: evt.is_parent_group ?? undefined,
+        });
         break;
 
       case "contact":

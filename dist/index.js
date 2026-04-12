@@ -28175,6 +28175,9 @@ async function initStore(dataDir2) {
       name TEXT,
       last_message_time TEXT,
       unread_count INTEGER NOT NULL DEFAULT 0,
+      archived INTEGER NOT NULL DEFAULT 0,
+      parent_group_jid TEXT,
+      is_parent_group INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (jid, account_id)
     )
   `);
@@ -28222,7 +28225,7 @@ async function initStore(dataDir2) {
   );
   migrateAddAccountId();
   migrateAddMediaInfo();
-  migrateAddUnreadCount();
+  migrateAddChatColumns();
   process.on("exit", flush);
   process.on("SIGINT", () => {
     flush();
@@ -28291,17 +28294,30 @@ function migrateAddMediaInfo() {
     console.error("[hermeneia] media_info migration error:", err);
   }
 }
-function migrateAddUnreadCount() {
+function migrateAddChatColumns() {
   const cols = db.exec("PRAGMA table_info(chats)");
   if (!cols.length) return;
-  const has = cols[0].values.some((row) => row[1] === "unread_count");
-  if (has) return;
+  const colNames = new Set(cols[0].values.map((row) => row[1]));
   try {
-    db.run("ALTER TABLE chats ADD COLUMN unread_count INTEGER NOT NULL DEFAULT 0");
-    console.error("[hermeneia] Added unread_count column to chats table");
+    if (!colNames.has("unread_count")) {
+      db.run("ALTER TABLE chats ADD COLUMN unread_count INTEGER NOT NULL DEFAULT 0");
+      console.error("[hermeneia] Added unread_count column to chats table");
+    }
+    if (!colNames.has("archived")) {
+      db.run("ALTER TABLE chats ADD COLUMN archived INTEGER NOT NULL DEFAULT 0");
+      console.error("[hermeneia] Added archived column to chats table");
+    }
+    if (!colNames.has("parent_group_jid")) {
+      db.run("ALTER TABLE chats ADD COLUMN parent_group_jid TEXT");
+      console.error("[hermeneia] Added parent_group_jid column to chats table");
+    }
+    if (!colNames.has("is_parent_group")) {
+      db.run("ALTER TABLE chats ADD COLUMN is_parent_group INTEGER NOT NULL DEFAULT 0");
+      console.error("[hermeneia] Added is_parent_group column to chats table");
+    }
     flush();
   } catch (err) {
-    console.error("[hermeneia] unread_count migration error:", err);
+    console.error("[hermeneia] chat columns migration error:", err);
   }
 }
 function incrementUnread(accountId, chatJid) {
@@ -28368,27 +28384,28 @@ function resolveContactName(jid, accountId) {
   if (chat?.name) return chat.name;
   return null;
 }
-function upsertChat(accountId, jid, name, lastMessageTime, unreadCount) {
-  if (unreadCount !== void 0) {
-    db.run(
-      `INSERT INTO chats (jid, account_id, name, last_message_time, unread_count)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(jid, account_id) DO UPDATE SET
-         name = COALESCE(excluded.name, chats.name),
-         last_message_time = MAX(excluded.last_message_time, chats.last_message_time),
-         unread_count = excluded.unread_count`,
-      [jid, accountId, name, lastMessageTime, unreadCount]
-    );
-  } else {
-    db.run(
-      `INSERT INTO chats (jid, account_id, name, last_message_time)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(jid, account_id) DO UPDATE SET
-         name = COALESCE(excluded.name, chats.name),
-         last_message_time = MAX(excluded.last_message_time, chats.last_message_time)`,
-      [jid, accountId, name, lastMessageTime]
-    );
-  }
+function upsertChat(accountId, jid, name, lastMessageTime, opts) {
+  db.run(
+    `INSERT INTO chats (jid, account_id, name, last_message_time, unread_count, archived, parent_group_jid, is_parent_group)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(jid, account_id) DO UPDATE SET
+       name = COALESCE(excluded.name, chats.name),
+       last_message_time = MAX(excluded.last_message_time, chats.last_message_time),
+       unread_count = CASE WHEN excluded.unread_count >= 0 THEN excluded.unread_count ELSE chats.unread_count END,
+       archived = CASE WHEN excluded.archived >= 0 THEN excluded.archived ELSE chats.archived END,
+       parent_group_jid = COALESCE(excluded.parent_group_jid, chats.parent_group_jid),
+       is_parent_group = CASE WHEN excluded.is_parent_group >= 0 THEN excluded.is_parent_group ELSE chats.is_parent_group END`,
+    [
+      jid,
+      accountId,
+      name,
+      lastMessageTime,
+      opts?.unreadCount ?? -1,
+      opts?.archived !== void 0 ? opts.archived ? 1 : 0 : -1,
+      opts?.parentGroupJid ?? null,
+      opts?.isParentGroup !== void 0 ? opts.isParentGroup ? 1 : 0 : -1
+    ]
+  );
   maybeFlush();
 }
 function storeMessage(accountId, id, chatJid, sender, content, timestamp, isFromMe, mediaType, filename, mediaInfo = null) {
@@ -28539,7 +28556,8 @@ function listChats(opts) {
   const limit = Math.min(opts.limit ?? 50, 200);
   const page = opts.page ?? 0;
   const offset = page * limit;
-  const orderBy = opts.sortBy === "name" ? "c.name" : "c.last_message_time DESC";
+  const sortField = opts.sortBy === "name" ? "c.name" : "c.last_message_time DESC";
+  const orderBy = opts.includeArchived ? `c.archived ASC, ${sortField}` : sortField;
   const where = [];
   const params = [];
   if (opts.accountId) {
@@ -28553,12 +28571,16 @@ function listChats(opts) {
   if (opts.unreadOnly) {
     where.push("c.unread_count > 0");
   }
+  if (!opts.includeArchived) {
+    where.push("c.archived = 0");
+  }
   const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
   const incLast = opts.includeLastMessage !== false;
   const joinClause = incLast ? "LEFT JOIN messages m ON c.jid = m.chat_jid AND c.account_id = m.account_id AND c.last_message_time = m.timestamp" : "";
   const selectLast = incLast ? "m.content AS last_message, m.sender AS last_sender, m.is_from_me AS last_is_from_me" : "NULL AS last_message, NULL AS last_sender, NULL AS last_is_from_me";
   const sql = `
-    SELECT c.jid, c.account_id, c.name, c.last_message_time, c.unread_count, ${selectLast}
+    SELECT c.jid, c.account_id, c.name, c.last_message_time, c.unread_count,
+           c.archived, c.parent_group_jid, c.is_parent_group, ${selectLast}
     FROM chats c ${joinClause}
     ${whereClause}
     ORDER BY ${orderBy}
@@ -28572,6 +28594,9 @@ function listChats(opts) {
       is_group: r.jid.endsWith("@g.us"),
       last_message_time: r.last_message_time,
       unread_count: r.unread_count ?? 0,
+      archived: !!r.archived,
+      parent_group_jid: r.parent_group_jid || null,
+      is_parent_group: !!r.is_parent_group,
       last_message: r.last_message,
       last_sender: r.last_sender,
       last_is_from_me: r.last_is_from_me != null ? !!r.last_is_from_me : null
@@ -28909,7 +28934,12 @@ var WhatsAppBridge = class extends EventEmitter {
         break;
       }
       case "chat":
-        upsertChat(this._accountId, evt.jid, evt.name || null, evt.last_message_time, evt.unread_count ?? void 0);
+        upsertChat(this._accountId, evt.jid, evt.name || null, evt.last_message_time, {
+          unreadCount: evt.unread_count ?? void 0,
+          archived: evt.archived ?? void 0,
+          parentGroupJid: evt.parent_group_jid || void 0,
+          isParentGroup: evt.is_parent_group ?? void 0
+        });
         break;
       case "contact":
         upsertContact(this._accountId, {
@@ -29610,7 +29640,8 @@ Use the add_account tool to connect a new account, or check if an existing accou
               page: args?.page,
               includeLastMessage: args?.include_last_message,
               sortBy: args?.sort_by,
-              unreadOnly: args?.unread_only
+              unreadOnly: args?.unread_only,
+              includeArchived: args?.include_archived
             })
           );
         }
@@ -29879,6 +29910,10 @@ Use the add_account tool to connect a new account, or check if an existing accou
               unread_only: {
                 type: "boolean",
                 description: "Only return chats with unread messages"
+              },
+              include_archived: {
+                type: "boolean",
+                description: "Include archived chats (excluded by default)"
               },
               sort_by: {
                 type: "string",
