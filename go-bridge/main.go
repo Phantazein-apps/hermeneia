@@ -65,6 +65,14 @@ func main() {
 	// Set device name to "Claude" — shown in WhatsApp > Linked Devices
 	store.DeviceProps.Os = proto.String("Claude")
 	store.DeviceProps.PlatformType = waCompanionReg.DeviceProps_DESKTOP.Enum()
+	store.DeviceProps.RequireFullSync = proto.Bool(true)
+
+	// Request deep history sync
+	store.DeviceProps.HistorySyncConfig.FullSyncDaysLimit = proto.Uint32(365 * 3)
+	store.DeviceProps.HistorySyncConfig.FullSyncSizeMbLimit = proto.Uint32(5120)
+	store.DeviceProps.HistorySyncConfig.RecentSyncDaysLimit = proto.Uint32(365)
+	store.DeviceProps.HistorySyncConfig.StorageQuotaMb = proto.Uint32(10240)
+	store.DeviceProps.HistorySyncConfig.InitialSyncMaxMessagesPerChat = proto.Uint32(1000)
 
 	// Get or create device
 	device, err := container.GetFirstDevice(context.Background())
