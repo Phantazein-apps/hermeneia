@@ -26,10 +26,12 @@ The session persists across restarts. You only scan once.
 ## What Claude can do
 
 - **Read messages** — search, filter by date/contact/chat, get context around any message
+- **Unread summary** — "summarize my unread WhatsApp" works out of the box
 - **Send messages** — text, images, videos, documents, voice notes
 - **Download and view images** — Claude can see photos from your chats, not just file paths
 - **Browse contacts** — search by name or phone number
-- **Browse chats** — list all conversations, see last messages
+- **Browse chats** — list all conversations with unread counts; archived chats hidden by default
+- **Community awareness** — chats show which WhatsApp community they belong to
 - **Deep history** — syncs up to 3 years of message history (1000 messages per chat) on first connect
 
 ## Multiple WhatsApp Accounts
