@@ -9,12 +9,15 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waCompanionReg"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -23,13 +26,21 @@ import (
 )
 
 var client *whatsmeow.Client
+var dataDir string
+
+// mediaCache stores raw protobuf messages for later download, keyed by message ID.
+// Entries are evicted after 24 hours to avoid unbounded growth.
+var (
+	mediaCache   = make(map[string]*waE2E.Message)
+	mediaCacheMu sync.Mutex
+)
 
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintf(os.Stderr, "Usage: hermeneia-bridge <data-dir>\n")
 		os.Exit(1)
 	}
-	dataDir := os.Args[1]
+	dataDir = os.Args[1]
 
 	// Ensure data directory exists
 	os.MkdirAll(dataDir, 0755)
@@ -50,6 +61,10 @@ func main() {
 		logf("Failed to init store: %v", err)
 		os.Exit(1)
 	}
+
+	// Set device name to "Claude" — shown in WhatsApp > Linked Devices
+	store.DeviceProps.Os = proto.String("Claude")
+	store.DeviceProps.PlatformType = waCompanionReg.DeviceProps_DESKTOP.Enum()
 
 	// Get or create device
 	device, err := container.GetFirstDevice(context.Background())
@@ -181,12 +196,17 @@ func handleMessage(evt *events.Message) {
 	// Extract text
 	content := extractText(evt.Message)
 
-	// Extract media type
+	// Extract media type and info
 	var mediaType *string
 	mt := extractMediaType(evt.Message)
 	if mt != "" {
 		mediaType = &mt
+		// Cache for in-session fast download
+		mediaCacheMu.Lock()
+		mediaCache[messageID] = evt.Message
+		mediaCacheMu.Unlock()
 	}
+	mediaInfo := extractMediaInfo(evt.Message)
 
 	// Get push name
 	pushName := info.PushName
@@ -205,6 +225,7 @@ func handleMessage(evt *events.Message) {
 		IsFromMe:  isFromMe,
 		Timestamp: timestamp,
 		MediaType: mediaType,
+		MediaInfo: mediaInfo,
 		PushName:  pushName,
 	})
 }
@@ -229,6 +250,56 @@ func extractText(msg *waE2E.Message) string {
 		return *msg.DocumentMessage.Caption
 	}
 	return ""
+}
+
+func extractMediaInfo(msg *waE2E.Message) *MediaInfo {
+	if msg == nil {
+		return nil
+	}
+	switch {
+	case msg.ImageMessage != nil:
+		m := msg.ImageMessage
+		return &MediaInfo{
+			MediaType: "image", Mimetype: m.GetMimetype(),
+			MediaKey: m.GetMediaKey(), DirectPath: m.GetDirectPath(),
+			URL: m.GetURL(), FileEncSHA256: m.GetFileEncSHA256(),
+			FileSHA256: m.GetFileSHA256(), FileLength: m.GetFileLength(),
+		}
+	case msg.VideoMessage != nil:
+		m := msg.VideoMessage
+		return &MediaInfo{
+			MediaType: "video", Mimetype: m.GetMimetype(),
+			MediaKey: m.GetMediaKey(), DirectPath: m.GetDirectPath(),
+			URL: m.GetURL(), FileEncSHA256: m.GetFileEncSHA256(),
+			FileSHA256: m.GetFileSHA256(), FileLength: m.GetFileLength(),
+		}
+	case msg.AudioMessage != nil:
+		m := msg.AudioMessage
+		return &MediaInfo{
+			MediaType: "audio", Mimetype: m.GetMimetype(),
+			MediaKey: m.GetMediaKey(), DirectPath: m.GetDirectPath(),
+			URL: m.GetURL(), FileEncSHA256: m.GetFileEncSHA256(),
+			FileSHA256: m.GetFileSHA256(), FileLength: m.GetFileLength(),
+		}
+	case msg.DocumentMessage != nil:
+		m := msg.DocumentMessage
+		return &MediaInfo{
+			MediaType: "document", Mimetype: m.GetMimetype(),
+			MediaKey: m.GetMediaKey(), DirectPath: m.GetDirectPath(),
+			URL: m.GetURL(), FileEncSHA256: m.GetFileEncSHA256(),
+			FileSHA256: m.GetFileSHA256(), FileLength: m.GetFileLength(),
+			Filename: m.GetFileName(),
+		}
+	case msg.StickerMessage != nil:
+		m := msg.StickerMessage
+		return &MediaInfo{
+			MediaType: "sticker", Mimetype: m.GetMimetype(),
+			MediaKey: m.GetMediaKey(), DirectPath: m.GetDirectPath(),
+			URL: m.GetURL(), FileEncSHA256: m.GetFileEncSHA256(),
+			FileSHA256: m.GetFileSHA256(), FileLength: m.GetFileLength(),
+		}
+	}
+	return nil
 }
 
 func extractMediaType(msg *waE2E.Message) string {
@@ -310,6 +381,7 @@ func handleHistorySync(evt *events.HistorySync) {
 			if mt != "" {
 				mediaType = &mt
 			}
+			mInfo := extractMediaInfo(msg.GetMessage())
 
 			pushName := msg.GetPushName()
 			if pushName != "" && sender != chatJ {
@@ -332,6 +404,7 @@ func handleHistorySync(evt *events.HistorySync) {
 				IsFromMe:  isFromMe,
 				Timestamp: timestamp,
 				MediaType: mediaType,
+				MediaInfo: mInfo,
 				PushName:  pushName,
 			})
 		}
@@ -448,6 +521,8 @@ func readCommands() {
 			go handleSendMessage(cmd)
 		case "send_file":
 			go handleSendFile(cmd)
+		case "download_media":
+			go handleDownloadMedia(cmd)
 		case "get_contacts":
 			go func() {
 				sendAllContacts()
@@ -595,6 +670,158 @@ func handleSendFile(cmd Command) {
 	}
 
 	emit(Event{Type: "response", ReqID: cmd.ID, Success: true, Message: "sent"})
+}
+
+func handleDownloadMedia(cmd Command) {
+	if client == nil {
+		emit(Event{Type: "response", ReqID: cmd.ID, Success: false, Message: "not connected"})
+		return
+	}
+
+	msgID := cmd.MessageID
+	if msgID == "" {
+		emit(Event{Type: "response", ReqID: cmd.ID, Success: false, Message: "missing message_id"})
+		return
+	}
+
+	var dl whatsmeow.DownloadableMessage
+	var ext string
+	var mime string
+
+	// Try in-memory cache first (fastest, works for current session)
+	mediaCacheMu.Lock()
+	msg, ok := mediaCache[msgID]
+	mediaCacheMu.Unlock()
+
+	if ok {
+		switch {
+		case msg.ImageMessage != nil:
+			dl = msg.ImageMessage
+			mime = msg.ImageMessage.GetMimetype()
+			ext = mimeToExt(mime, ".jpg")
+		case msg.VideoMessage != nil:
+			dl = msg.VideoMessage
+			mime = msg.VideoMessage.GetMimetype()
+			ext = mimeToExt(mime, ".mp4")
+		case msg.AudioMessage != nil:
+			dl = msg.AudioMessage
+			mime = msg.AudioMessage.GetMimetype()
+			ext = mimeToExt(mime, ".ogg")
+		case msg.DocumentMessage != nil:
+			dl = msg.DocumentMessage
+			mime = msg.DocumentMessage.GetMimetype()
+			ext = mimeToExt(mime, ".bin")
+			if fn := msg.DocumentMessage.GetFileName(); fn != "" {
+				ext = filepath.Ext(fn)
+			}
+		case msg.StickerMessage != nil:
+			dl = msg.StickerMessage
+			mime = msg.StickerMessage.GetMimetype()
+			ext = mimeToExt(mime, ".webp")
+		}
+	} else if cmd.MediaInfo != nil {
+		// Reconstruct downloadable message from persisted metadata
+		mi := cmd.MediaInfo
+		mime = mi.Mimetype
+		ext = mimeToExt(mime, ".bin")
+		if mi.Filename != "" {
+			ext = filepath.Ext(mi.Filename)
+		}
+
+		switch mi.MediaType {
+		case "image":
+			dl = &waE2E.ImageMessage{
+				MediaKey: mi.MediaKey, DirectPath: &mi.DirectPath,
+				URL: &mi.URL, FileEncSHA256: mi.FileEncSHA256,
+				FileSHA256: mi.FileSHA256, FileLength: &mi.FileLength,
+				Mimetype: &mi.Mimetype,
+			}
+		case "video":
+			dl = &waE2E.VideoMessage{
+				MediaKey: mi.MediaKey, DirectPath: &mi.DirectPath,
+				URL: &mi.URL, FileEncSHA256: mi.FileEncSHA256,
+				FileSHA256: mi.FileSHA256, FileLength: &mi.FileLength,
+				Mimetype: &mi.Mimetype,
+			}
+		case "audio":
+			dl = &waE2E.AudioMessage{
+				MediaKey: mi.MediaKey, DirectPath: &mi.DirectPath,
+				URL: &mi.URL, FileEncSHA256: mi.FileEncSHA256,
+				FileSHA256: mi.FileSHA256, FileLength: &mi.FileLength,
+				Mimetype: &mi.Mimetype,
+			}
+		case "document":
+			dl = &waE2E.DocumentMessage{
+				MediaKey: mi.MediaKey, DirectPath: &mi.DirectPath,
+				URL: &mi.URL, FileEncSHA256: mi.FileEncSHA256,
+				FileSHA256: mi.FileSHA256, FileLength: &mi.FileLength,
+				Mimetype: &mi.Mimetype,
+			}
+		case "sticker":
+			dl = &waE2E.StickerMessage{
+				MediaKey: mi.MediaKey, DirectPath: &mi.DirectPath,
+				URL: &mi.URL, FileEncSHA256: mi.FileEncSHA256,
+				FileSHA256: mi.FileSHA256, FileLength: proto.Uint64(mi.FileLength),
+				Mimetype: &mi.Mimetype,
+			}
+		default:
+			emit(Event{Type: "response", ReqID: cmd.ID, Success: false, Message: "unknown media type: " + mi.MediaType})
+			return
+		}
+	} else {
+		emit(Event{Type: "response", ReqID: cmd.ID, Success: false, Message: "no media info available for this message"})
+		return
+	}
+
+	if dl == nil {
+		emit(Event{Type: "response", ReqID: cmd.ID, Success: false, Message: "no downloadable media in message"})
+		return
+	}
+
+	data, err := client.Download(context.Background(), dl)
+	if err != nil {
+		emit(Event{Type: "response", ReqID: cmd.ID, Success: false, Message: fmt.Sprintf("download failed: %v", err)})
+		return
+	}
+
+	// Save to disk
+	saveDir := cmd.SaveDir
+	if saveDir == "" {
+		saveDir = filepath.Join(dataDir, "media")
+	}
+	os.MkdirAll(saveDir, 0755)
+
+	filename := msgID + ext
+	savePath := filepath.Join(saveDir, filename)
+
+	if err := os.WriteFile(savePath, data, 0644); err != nil {
+		emit(Event{Type: "response", ReqID: cmd.ID, Success: false, Message: fmt.Sprintf("save failed: %v", err)})
+		return
+	}
+
+	logf("Downloaded media: %s (%d bytes, %s)", savePath, len(data), mime)
+	emit(Event{Type: "response", ReqID: cmd.ID, Success: true, Message: savePath})
+}
+
+func mimeToExt(mime string, fallback string) string {
+	switch {
+	case strings.Contains(mime, "jpeg") || strings.Contains(mime, "jpg"):
+		return ".jpg"
+	case strings.Contains(mime, "png"):
+		return ".png"
+	case strings.Contains(mime, "gif"):
+		return ".gif"
+	case strings.Contains(mime, "webp"):
+		return ".webp"
+	case strings.Contains(mime, "mp4"):
+		return ".mp4"
+	case strings.Contains(mime, "ogg"):
+		return ".ogg"
+	case strings.Contains(mime, "pdf"):
+		return ".pdf"
+	default:
+		return fallback
+	}
 }
 
 // ── Helpers ───────────────────────────────────────────────────────

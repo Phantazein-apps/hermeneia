@@ -21,6 +21,7 @@ import {
   getMessageContext,
   getSenderName,
   getStoreDiagnostics,
+  getMessageMediaInfo,
 } from "./store.js";
 
 // Optional account parameter added to all tool schemas
@@ -293,10 +294,26 @@ export function registerTools(server: Server, manager: BridgeManager): void {
         }
 
         case "download_media": {
-          return text(
-            "Media download requires the original message object. " +
-              "This feature is coming in a future version."
-          );
+          const messageId = args?.message_id as string;
+          const chatJid = args?.chat_jid as string;
+          if (!messageId) return text("Missing required argument: message_id");
+          if (!chatJid) return text("Missing required argument: chat_jid");
+
+          const bridge = manager.resolveForSend(accountId);
+          if ("error" in bridge) return text(bridge.error);
+
+          // Look up persisted media info from DB
+          const mediaInfoJson = getMessageMediaInfo(messageId, accountId);
+          const mediaInfo = mediaInfoJson ? JSON.parse(mediaInfoJson) : undefined;
+
+          const result = await bridge.downloadMedia(messageId, chatJid, mediaInfo);
+          if (result.success) {
+            return json({
+              message: "Media downloaded successfully",
+              file_path: result.message,
+            });
+          }
+          return text(result.message);
         }
 
         default:

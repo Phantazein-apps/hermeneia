@@ -88,6 +88,7 @@ export async function initStore(dataDir: string): Promise<void> {
       timestamp TEXT,
       is_from_me INTEGER,
       media_type TEXT,
+      media_info TEXT,
       filename TEXT,
       PRIMARY KEY (id, chat_jid, account_id)
     )
@@ -108,6 +109,8 @@ export async function initStore(dataDir: string): Promise<void> {
 
   // Migrate old schema: add account_id column if missing
   migrateAddAccountId();
+  // Migrate: add media_info column if missing
+  migrateAddMediaInfo();
 
   // Flush on exit
   process.on("exit", flush);
@@ -152,7 +155,7 @@ function migrateAddAccountId(): void {
     db.run(`CREATE TABLE messages (
       id TEXT, chat_jid TEXT, account_id TEXT NOT NULL DEFAULT 'default',
       sender TEXT, content TEXT, timestamp TEXT, is_from_me INTEGER,
-      media_type TEXT, filename TEXT,
+      media_type TEXT, media_info TEXT, filename TEXT,
       PRIMARY KEY (id, chat_jid, account_id)
     )`);
     db.run("INSERT INTO messages (id, chat_jid, account_id, sender, content, timestamp, is_from_me, media_type, filename) SELECT id, chat_jid, 'default', sender, content, timestamp, is_from_me, media_type, filename FROM messages_old");
@@ -173,6 +176,22 @@ function migrateAddAccountId(): void {
   } catch (err) {
     try { db.run("ROLLBACK"); } catch {}
     console.error("[hermeneia] Migration error:", err);
+  }
+}
+
+function migrateAddMediaInfo(): void {
+  // Check if media_info column already exists
+  const cols = db.exec("PRAGMA table_info(messages)");
+  if (!cols.length) return;
+  const hasMediaInfo = cols[0].values.some((row: any[]) => row[1] === "media_info");
+  if (hasMediaInfo) return;
+
+  try {
+    db.run("ALTER TABLE messages ADD COLUMN media_info TEXT");
+    console.error("[hermeneia] Added media_info column to messages table");
+    flush();
+  } catch (err) {
+    console.error("[hermeneia] media_info migration error:", err);
   }
 }
 
@@ -297,13 +316,14 @@ export function storeMessage(
   timestamp: string,
   isFromMe: boolean,
   mediaType: string | null,
-  filename: string | null
+  filename: string | null,
+  mediaInfo: string | null = null
 ): void {
   db.run(
     `INSERT OR IGNORE INTO messages
-       (id, chat_jid, account_id, sender, content, timestamp, is_from_me, media_type, filename)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, chatJid, accountId, sender, content, timestamp, isFromMe ? 1 : 0, mediaType, filename]
+       (id, chat_jid, account_id, sender, content, timestamp, is_from_me, media_type, media_info, filename)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, chatJid, accountId, sender, content, timestamp, isFromMe ? 1 : 0, mediaType, mediaInfo, filename]
   );
   maybeFlush();
 }
@@ -366,6 +386,15 @@ function toMessageDict(row: any, includeSenderName = true, accountId?: string): 
   };
   if (row.account_id) dict.account_id = row.account_id;
   return dict;
+}
+
+export function getMessageMediaInfo(messageId: string, accountId?: string): string | null {
+  const sql = accountId
+    ? "SELECT media_info FROM messages WHERE id = ? AND account_id = ? AND media_info IS NOT NULL LIMIT 1"
+    : "SELECT media_info FROM messages WHERE id = ? AND media_info IS NOT NULL LIMIT 1";
+  const params = accountId ? [messageId, accountId] : [messageId];
+  const row = queryOne(sql, params);
+  return row?.media_info ?? null;
 }
 
 // ── Public query functions ─────────────────────────────────────────

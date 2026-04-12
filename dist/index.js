@@ -28202,6 +28202,7 @@ async function initStore(dataDir2) {
       timestamp TEXT,
       is_from_me INTEGER,
       media_type TEXT,
+      media_info TEXT,
       filename TEXT,
       PRIMARY KEY (id, chat_jid, account_id)
     )
@@ -28219,6 +28220,7 @@ async function initStore(dataDir2) {
     "CREATE INDEX IF NOT EXISTS idx_messages_account ON messages(account_id)"
   );
   migrateAddAccountId();
+  migrateAddMediaInfo();
   process.on("exit", flush);
   process.on("SIGINT", () => {
     flush();
@@ -28251,7 +28253,7 @@ function migrateAddAccountId() {
     db.run(`CREATE TABLE messages (
       id TEXT, chat_jid TEXT, account_id TEXT NOT NULL DEFAULT 'default',
       sender TEXT, content TEXT, timestamp TEXT, is_from_me INTEGER,
-      media_type TEXT, filename TEXT,
+      media_type TEXT, media_info TEXT, filename TEXT,
       PRIMARY KEY (id, chat_jid, account_id)
     )`);
     db.run("INSERT INTO messages (id, chat_jid, account_id, sender, content, timestamp, is_from_me, media_type, filename) SELECT id, chat_jid, 'default', sender, content, timestamp, is_from_me, media_type, filename FROM messages_old");
@@ -28272,6 +28274,19 @@ function migrateAddAccountId() {
     } catch {
     }
     console.error("[hermeneia] Migration error:", err);
+  }
+}
+function migrateAddMediaInfo() {
+  const cols = db.exec("PRAGMA table_info(messages)");
+  if (!cols.length) return;
+  const hasMediaInfo = cols[0].values.some((row) => row[1] === "media_info");
+  if (hasMediaInfo) return;
+  try {
+    db.run("ALTER TABLE messages ADD COLUMN media_info TEXT");
+    console.error("[hermeneia] Added media_info column to messages table");
+    flush();
+  } catch (err) {
+    console.error("[hermeneia] media_info migration error:", err);
   }
 }
 function upsertContact(accountId, opts) {
@@ -28343,12 +28358,12 @@ function upsertChat(accountId, jid, name, lastMessageTime) {
   );
   maybeFlush();
 }
-function storeMessage(accountId, id, chatJid, sender, content, timestamp, isFromMe, mediaType, filename) {
+function storeMessage(accountId, id, chatJid, sender, content, timestamp, isFromMe, mediaType, filename, mediaInfo = null) {
   db.run(
     `INSERT OR IGNORE INTO messages
-       (id, chat_jid, account_id, sender, content, timestamp, is_from_me, media_type, filename)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, chatJid, accountId, sender, content, timestamp, isFromMe ? 1 : 0, mediaType, filename]
+       (id, chat_jid, account_id, sender, content, timestamp, is_from_me, media_type, media_info, filename)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, chatJid, accountId, sender, content, timestamp, isFromMe ? 1 : 0, mediaType, mediaInfo, filename]
   );
   maybeFlush();
 }
@@ -28403,6 +28418,12 @@ function toMessageDict(row, includeSenderName = true, accountId) {
   };
   if (row.account_id) dict.account_id = row.account_id;
   return dict;
+}
+function getMessageMediaInfo(messageId, accountId) {
+  const sql = accountId ? "SELECT media_info FROM messages WHERE id = ? AND account_id = ? AND media_info IS NOT NULL LIMIT 1" : "SELECT media_info FROM messages WHERE id = ? AND media_info IS NOT NULL LIMIT 1";
+  const params = accountId ? [messageId, accountId] : [messageId];
+  const row = queryOne(sql, params);
+  return row?.media_info ?? null;
 }
 function listMessages(opts) {
   const limit = Math.min(opts.limit ?? 50, 500);
@@ -28819,6 +28840,7 @@ var WhatsAppBridge = class extends EventEmitter {
         const mediaType = evt.media_type ?? null;
         const messageId = evt.id;
         const pushName = evt.push_name ?? null;
+        const mediaInfo = evt.media_info ? JSON.stringify(evt.media_info) : null;
         upsertChat(this._accountId, chatJid, null, timestamp);
         if (content || mediaType) {
           storeMessage(
@@ -28830,7 +28852,8 @@ var WhatsAppBridge = class extends EventEmitter {
             timestamp,
             isFromMe,
             mediaType,
-            null
+            null,
+            mediaInfo
           );
         }
         this.emit("message", {
@@ -28902,6 +28925,18 @@ var WhatsAppBridge = class extends EventEmitter {
     }
     return this.sendCommand({ cmd: "send_message", recipient, text: text2 });
   }
+  async downloadMedia(messageId, chatJid, mediaInfo, saveDir) {
+    if (!this.isConnected) {
+      return { success: false, message: "Not connected to WhatsApp" };
+    }
+    return this.sendCommand({
+      cmd: "download_media",
+      message_id: messageId,
+      chat_jid: chatJid,
+      media_info: mediaInfo ?? void 0,
+      save_dir: saveDir ?? ""
+    });
+  }
   async sendFile(recipient, filePath, caption) {
     if (!this.isConnected) {
       return { success: false, message: "Not connected to WhatsApp" };
@@ -28947,7 +28982,7 @@ function getOrCreateSession(bridge, accountId) {
 }
 function setupHtml(accountId) {
   const title = accountId === "default" ? "Connect WhatsApp" : `Connect WhatsApp \u2014 ${accountId}`;
-  return SETUP_HTML.replace("{{TITLE}}", title).replace("{{ACCOUNT_ID}}", accountId);
+  return SETUP_HTML.replaceAll("{{TITLE}}", title).replaceAll("{{ACCOUNT_ID}}", accountId);
 }
 var SETUP_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -29594,9 +29629,22 @@ Use the add_account tool to connect a new account, or check if an existing accou
           return json2(result);
         }
         case "download_media": {
-          return text(
-            "Media download requires the original message object. This feature is coming in a future version."
-          );
+          const messageId = args?.message_id;
+          const chatJid = args?.chat_jid;
+          if (!messageId) return text("Missing required argument: message_id");
+          if (!chatJid) return text("Missing required argument: chat_jid");
+          const bridge = manager.resolveForSend(accountId);
+          if ("error" in bridge) return text(bridge.error);
+          const mediaInfoJson = getMessageMediaInfo(messageId, accountId);
+          const mediaInfo = mediaInfoJson ? JSON.parse(mediaInfoJson) : void 0;
+          const result = await bridge.downloadMedia(messageId, chatJid, mediaInfo);
+          if (result.success) {
+            return json2({
+              message: "Media downloaded successfully",
+              file_path: result.message
+            });
+          }
+          return text(result.message);
         }
         default:
           return text(`Unknown tool: ${name}`);

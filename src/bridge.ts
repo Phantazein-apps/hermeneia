@@ -206,6 +206,7 @@ export class WhatsAppBridge extends EventEmitter {
         const mediaType = evt.media_type ?? null;
         const messageId = evt.id;
         const pushName = evt.push_name ?? null;
+        const mediaInfo = evt.media_info ? JSON.stringify(evt.media_info) : null;
 
         // Update chat
         upsertChat(this._accountId, chatJid, null, timestamp);
@@ -221,7 +222,8 @@ export class WhatsAppBridge extends EventEmitter {
             timestamp,
             isFromMe,
             mediaType,
-            null
+            null,
+            mediaInfo
           );
         }
 
@@ -308,6 +310,24 @@ export class WhatsAppBridge extends EventEmitter {
       return { success: false, message: "Not connected to WhatsApp" };
     }
     return this.sendCommand({ cmd: "send_message", recipient, text });
+  }
+
+  async downloadMedia(
+    messageId: string,
+    chatJid: string,
+    mediaInfo?: any,
+    saveDir?: string
+  ): Promise<{ success: boolean; message: string }> {
+    if (!this.isConnected) {
+      return { success: false, message: "Not connected to WhatsApp" };
+    }
+    return this.sendCommand({
+      cmd: "download_media",
+      message_id: messageId,
+      chat_jid: chatJid,
+      media_info: mediaInfo ?? undefined,
+      save_dir: saveDir ?? "",
+    });
   }
 
   async sendFile(

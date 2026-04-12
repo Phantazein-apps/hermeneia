@@ -40,12 +40,29 @@ type Event struct {
 	Count    int `json:"count,omitempty"`
 	Progress int `json:"progress,omitempty"`
 
+	// media download metadata (persisted by Node for later downloads)
+	MediaInfo *MediaInfo `json:"media_info,omitempty"`
+
 	// error
 	Message string `json:"message,omitempty"`
 
 	// response (to commands)
 	ReqID   string `json:"req_id,omitempty"`
 	Success bool   `json:"success,omitempty"`
+}
+
+// MediaInfo holds the fields needed to download media from WhatsApp servers.
+// Emitted with message events and passed back in download_media commands.
+type MediaInfo struct {
+	MediaType     string `json:"media_type"`
+	Mimetype      string `json:"mimetype"`
+	MediaKey      []byte `json:"media_key"`
+	DirectPath    string `json:"direct_path"`
+	URL           string `json:"url,omitempty"`
+	FileEncSHA256 []byte `json:"file_enc_sha256"`
+	FileSHA256    []byte `json:"file_sha256"`
+	FileLength    uint64 `json:"file_length"`
+	Filename      string `json:"filename,omitempty"`
 }
 
 // ── Commands: Node.js -> Go (stdin) ───────────────────────────────
@@ -57,6 +74,10 @@ type Command struct {
 	Text      string `json:"text,omitempty"`
 	Path      string `json:"path,omitempty"`
 	Caption   string `json:"caption,omitempty"`
+	MessageID string     `json:"message_id,omitempty"`
+	ChatJID   string     `json:"chat_jid,omitempty"`
+	SaveDir   string     `json:"save_dir,omitempty"`
+	MediaInfo *MediaInfo `json:"media_info,omitempty"`
 }
 
 // ── Thread-safe stdout writer ─────────────────────────────────────
