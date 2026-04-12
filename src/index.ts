@@ -89,6 +89,11 @@ async function main() {
       capabilities: {
         tools: {},
       },
+      instructions:
+        "You have full access to the user's WhatsApp messages via this server. " +
+        "When the user asks about WhatsApp, messages, contacts, or chats, use these tools. " +
+        "Use list_messages to search/read messages, list_chats to browse conversations, " +
+        "search_contacts to find people, and send_message to send texts.",
     }
   );
 
