@@ -13,6 +13,8 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { join, dirname } from "path";
+import { homedir } from "os";
+import { existsSync, cpSync, mkdirSync } from "fs";
 import { fileURLToPath } from "url";
 import { BridgeManager } from "./bridge-manager.js";
 import { initStore } from "./store.js";
@@ -23,11 +25,35 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const log = (msg: string) => console.error(`[hermeneia] ${msg}`);
 
 // ── Data directory ──────────────────────────────────────────────────
-// .mcpb sets HERMENEIA_DATA_DIR; fallback to ./data relative to the script
-const dataDir =
-  process.env.HERMENEIA_DATA_DIR ??
-  process.env.WHATSAPP_DATA_DIR ??
-  join(__dirname, "..", "data");
+// Use a stable location so upgrades preserve WhatsApp sessions and history.
+// Environment variables override for custom setups.
+function getDataDir(): string {
+  if (process.env.HERMENEIA_DATA_DIR) return process.env.HERMENEIA_DATA_DIR;
+  if (process.env.WHATSAPP_DATA_DIR) return process.env.WHATSAPP_DATA_DIR;
+
+  // Stable per-platform location
+  if (process.platform === "darwin") {
+    return join(homedir(), "Library", "Application Support", "Hermeneia");
+  } else if (process.platform === "win32") {
+    return join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "Hermeneia");
+  }
+  return join(homedir(), ".hermeneia");
+}
+
+const dataDir = getDataDir();
+
+// Migrate data from old bundle-relative location to stable path
+function migrateOldDataDir(): void {
+  const oldDir = join(__dirname, "..", "data");
+  if (oldDir === dataDir) return; // same location, nothing to do
+  if (!existsSync(oldDir)) return; // no old data
+  if (existsSync(join(dataDir, "accounts.json"))) return; // already migrated
+
+  log(`Migrating data from ${oldDir} to ${dataDir}`);
+  mkdirSync(dataDir, { recursive: true });
+  cpSync(oldDir, dataDir, { recursive: true });
+  log("Data migration complete");
+}
 
 const qrPort = parseInt(process.env.HERMENEIA_QR_PORT ?? "3456", 10);
 
@@ -35,6 +61,7 @@ const qrPort = parseInt(process.env.HERMENEIA_QR_PORT ?? "3456", 10);
 
 async function main() {
   log("Starting Hermeneia...");
+  migrateOldDataDir();
   log(`Data directory: ${dataDir}`);
 
   // 1. Initialize SQLite store (shared across all accounts)
@@ -56,7 +83,7 @@ async function main() {
   const mcpServer = new Server(
     {
       name: "hermeneia",
-      version: "0.3.0",
+      version: "0.4.0",
     },
     {
       capabilities: {

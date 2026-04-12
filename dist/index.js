@@ -28115,6 +28115,8 @@ var StdioServerTransport = class {
 
 // src/index.ts
 import { join as join5, dirname as dirname3 } from "path";
+import { homedir } from "os";
+import { existsSync as existsSync4, cpSync as cpSync2, mkdirSync as mkdirSync3 } from "fs";
 import { fileURLToPath as fileURLToPath4 } from "url";
 
 // src/bridge-manager.ts
@@ -30066,10 +30068,31 @@ function guessMime(filePath) {
 // src/index.ts
 var __dirname5 = dirname3(fileURLToPath4(import.meta.url));
 var log4 = (msg) => console.error(`[hermeneia] ${msg}`);
-var dataDir = process.env.HERMENEIA_DATA_DIR ?? process.env.WHATSAPP_DATA_DIR ?? join5(__dirname5, "..", "data");
+function getDataDir() {
+  if (process.env.HERMENEIA_DATA_DIR) return process.env.HERMENEIA_DATA_DIR;
+  if (process.env.WHATSAPP_DATA_DIR) return process.env.WHATSAPP_DATA_DIR;
+  if (process.platform === "darwin") {
+    return join5(homedir(), "Library", "Application Support", "Hermeneia");
+  } else if (process.platform === "win32") {
+    return join5(process.env.APPDATA ?? join5(homedir(), "AppData", "Roaming"), "Hermeneia");
+  }
+  return join5(homedir(), ".hermeneia");
+}
+var dataDir = getDataDir();
+function migrateOldDataDir() {
+  const oldDir = join5(__dirname5, "..", "data");
+  if (oldDir === dataDir) return;
+  if (!existsSync4(oldDir)) return;
+  if (existsSync4(join5(dataDir, "accounts.json"))) return;
+  log4(`Migrating data from ${oldDir} to ${dataDir}`);
+  mkdirSync3(dataDir, { recursive: true });
+  cpSync2(oldDir, dataDir, { recursive: true });
+  log4("Data migration complete");
+}
 var qrPort = parseInt(process.env.HERMENEIA_QR_PORT ?? "3456", 10);
 async function main() {
   log4("Starting Hermeneia...");
+  migrateOldDataDir();
   log4(`Data directory: ${dataDir}`);
   await initStore(dataDir);
   log4("Message store ready");
@@ -30083,7 +30106,7 @@ async function main() {
   const mcpServer = new Server(
     {
       name: "hermeneia",
-      version: "0.3.0"
+      version: "0.4.0"
     },
     {
       capabilities: {

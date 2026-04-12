@@ -36,12 +36,22 @@ copyFileSync(wasmSrc, resolve(__dirname, "dist/sql-wasm.wasm"));
 
 // 3. Build Go bridge binary for current platform
 const goBridgeDir = resolve(__dirname, "go-bridge");
+// Detect native arch — Node/Go may run under Rosetta on Apple Silicon
+function detectArch() {
+  if (process.platform === "darwin") {
+    try {
+      if (execSync("/usr/sbin/sysctl -n hw.optional.arm64").toString().trim() === "1") return "arm64";
+    } catch {}
+  }
+  return process.arch === "x64" ? "amd64" : process.arch;
+}
+const nativeArch = detectArch();
 try {
-  console.log("Building Go bridge...");
-  execSync("CGO_ENABLED=1 go build -o ../dist/hermeneia-bridge .", {
+  console.log(`Building Go bridge (${process.platform}/${nativeArch})...`);
+  execSync("go build -o ../dist/hermeneia-bridge .", {
     cwd: goBridgeDir,
     stdio: "inherit",
-    env: { ...process.env, CGO_ENABLED: "1" },
+    env: { ...process.env, CGO_ENABLED: "1", GOARCH: nativeArch },
   });
   console.log("Built dist/index.js + dist/hermeneia-bridge (+ sql-wasm.wasm)");
 } catch (err) {
