@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "hermeneia",
   "display_name": "WhatsApp (Hermeneia)",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Read, search, and send WhatsApp messages from Claude. Drag to install, scan a QR code, and you're done.",
   "author": {
     "name": "Phantazein S.L."
