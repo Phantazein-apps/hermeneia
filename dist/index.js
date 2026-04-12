@@ -29274,14 +29274,26 @@ function startQRServer(bridge, port = 3456, initialQr, dataDir2, accountId = "de
       res.writeHead(404);
       res.end("Not found");
     });
+    server.on("error", (err) => {
+      if (err.code === "EADDRINUSE") {
+        log2(`Port ${port} in use, trying ${port + 1}`);
+        server?.listen(port + 1);
+      } else {
+        log2(`QR server error: ${err.message}`);
+      }
+    });
     server.listen(port, () => {
-      log2(`Setup page: http://localhost:${port}/setup`);
+      const actualPort = server?.address()?.port ?? port;
+      log2(`Setup page: http://localhost:${actualPort}/setup`);
     });
   }
-  const hasExistingAuth = dataDir2 && existsSync2(join3(dataDir2, "auth", "creds.json"));
+  const hasExistingAuth = dataDir2 && existsSync2(join3(dataDir2, "whatsmeow.db"));
   if (!hasExistingAuth) {
-    const setupUrl = accountId === "default" ? `http://localhost:${port}/setup` : `http://localhost:${port}/setup/${accountId}`;
-    openBrowser(setupUrl);
+    setTimeout(() => {
+      const actualPort = server?.address()?.port ?? port;
+      const setupUrl = accountId === "default" ? `http://localhost:${actualPort}/setup` : `http://localhost:${actualPort}/setup/${accountId}`;
+      openBrowser(setupUrl);
+    }, 500);
   } else {
     log2(`QR generated during reconnect for "${accountId}" \u2014 not auto-opening browser`);
   }
@@ -29393,6 +29405,9 @@ var BridgeManager = class {
     });
     bridge.on("message", (msg) => {
       this.onMessage?.(id, msg);
+    });
+    bridge.on("error", (err) => {
+      log3(`Bridge error (${id}): ${err.message}`);
     });
     this.bridges.set(id, bridge);
     try {

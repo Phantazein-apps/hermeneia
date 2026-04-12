@@ -282,18 +282,32 @@ export function startQRServer(
       res.end("Not found");
     });
 
+    server.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EADDRINUSE") {
+        log(`Port ${port} in use, trying ${port + 1}`);
+        server?.listen(port + 1);
+      } else {
+        log(`QR server error: ${err.message}`);
+      }
+    });
+
     server.listen(port, () => {
-      log(`Setup page: http://localhost:${port}/setup`);
+      const actualPort = (server?.address() as any)?.port ?? port;
+      log(`Setup page: http://localhost:${actualPort}/setup`);
     });
   }
 
   // Only auto-open browser on first-time setup (no existing auth)
-  const hasExistingAuth = dataDir && existsSync(join(dataDir, "auth", "creds.json"));
+  const hasExistingAuth = dataDir && existsSync(join(dataDir, "whatsmeow.db"));
   if (!hasExistingAuth) {
-    const setupUrl = accountId === "default"
-      ? `http://localhost:${port}/setup`
-      : `http://localhost:${port}/setup/${accountId}`;
-    openBrowser(setupUrl);
+    // Wait briefly for listen to succeed, then open browser with actual port
+    setTimeout(() => {
+      const actualPort = (server?.address() as any)?.port ?? port;
+      const setupUrl = accountId === "default"
+        ? `http://localhost:${actualPort}/setup`
+        : `http://localhost:${actualPort}/setup/${accountId}`;
+      openBrowser(setupUrl);
+    }, 500);
   } else {
     log(`QR generated during reconnect for "${accountId}" — not auto-opening browser`);
   }

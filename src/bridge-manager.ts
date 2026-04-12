@@ -141,6 +141,10 @@ export class BridgeManager {
       this.onMessage?.(id, msg);
     });
 
+    bridge.on("error", (err: Error) => {
+      log(`Bridge error (${id}): ${err.message}`);
+    });
+
     this.bridges.set(id, bridge);
 
     try {
