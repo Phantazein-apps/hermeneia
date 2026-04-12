@@ -38,9 +38,10 @@ copyFileSync(wasmSrc, resolve(__dirname, "dist/sql-wasm.wasm"));
 const goBridgeDir = resolve(__dirname, "go-bridge");
 try {
   console.log("Building Go bridge...");
-  execSync("go build -o ../dist/hermeneia-bridge .", {
+  execSync("CGO_ENABLED=1 go build -o ../dist/hermeneia-bridge .", {
     cwd: goBridgeDir,
     stdio: "inherit",
+    env: { ...process.env, CGO_ENABLED: "1" },
   });
   console.log("Built dist/index.js + dist/hermeneia-bridge (+ sql-wasm.wasm)");
 } catch (err) {
