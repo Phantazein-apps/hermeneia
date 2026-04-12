@@ -43,6 +43,7 @@ export interface ChatDict {
   name: string | null;
   is_group: boolean;
   last_message_time: string | null;
+  unread_count?: number;
   last_message: string | null;
   last_sender: string | null;
   last_is_from_me: boolean | null;

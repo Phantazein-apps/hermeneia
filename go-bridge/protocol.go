@@ -29,6 +29,8 @@ type Event struct {
 	JID             string `json:"jid,omitempty"`
 	Name            string `json:"name,omitempty"`
 	LastMessageTime string `json:"last_message_time,omitempty"`
+	UnreadCount     *int   `json:"unread_count,omitempty"`
+	MarkedAsUnread  *bool  `json:"marked_as_unread,omitempty"`
 
 	// contact
 	PhoneJID     string  `json:"phone_jid,omitempty"`

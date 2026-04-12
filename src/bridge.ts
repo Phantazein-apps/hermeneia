@@ -10,7 +10,7 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { EventEmitter } from "events";
 import { createInterface } from "readline";
-import { upsertChat, storeMessage, upsertContact } from "./store.js";
+import { upsertChat, storeMessage, upsertContact, incrementUnread } from "./store.js";
 import type { BridgeStatus } from "./types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -208,8 +208,11 @@ export class WhatsAppBridge extends EventEmitter {
         const pushName = evt.push_name ?? null;
         const mediaInfo = evt.media_info ? JSON.stringify(evt.media_info) : null;
 
-        // Update chat
+        // Update chat + increment unread for incoming messages
         upsertChat(this._accountId, chatJid, null, timestamp);
+        if (!isFromMe) {
+          incrementUnread(this._accountId, chatJid);
+        }
 
         // Store message
         if (content || mediaType) {
@@ -241,7 +244,7 @@ export class WhatsAppBridge extends EventEmitter {
       }
 
       case "chat":
-        upsertChat(this._accountId, evt.jid, evt.name || null, evt.last_message_time);
+        upsertChat(this._accountId, evt.jid, evt.name || null, evt.last_message_time, evt.unread_count ?? undefined);
         break;
 
       case "contact":

@@ -357,11 +357,16 @@ func handleHistorySync(evt *events.HistorySync) {
 			ts = time.Now().UTC().Format(time.RFC3339)
 		}
 
+		unread := int(conv.GetUnreadCount())
+		markedUnread := conv.GetMarkedAsUnread()
+
 		emit(Event{
 			Type:            "chat",
 			JID:             chatJID,
 			Name:            chatName,
 			LastMessageTime: ts,
+			UnreadCount:     &unread,
+			MarkedAsUnread:  &markedUnread,
 		})
 
 		// Process messages in this conversation

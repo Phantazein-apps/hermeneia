@@ -221,6 +221,7 @@ export function registerTools(server: Server, manager: BridgeManager): void {
               page: args?.page as number | undefined,
               includeLastMessage: args?.include_last_message as boolean | undefined,
               sortBy: args?.sort_by as "last_active" | "name" | undefined,
+              unreadOnly: args?.unread_only as boolean | undefined,
             })
           );
         }
@@ -512,7 +513,7 @@ export function registerTools(server: Server, manager: BridgeManager): void {
         },
         {
           name: "list_chats",
-          description: "List WhatsApp chats with metadata. Searches all accounts by default.",
+          description: "List WhatsApp chats with metadata. Searches all accounts by default. Use unread_only to get chats with unread messages.",
           inputSchema: {
             type: "object",
             properties: {
@@ -522,6 +523,10 @@ export function registerTools(server: Server, manager: BridgeManager): void {
               include_last_message: {
                 type: "boolean",
                 description: "Include last message (default true)",
+              },
+              unread_only: {
+                type: "boolean",
+                description: "Only return chats with unread messages",
               },
               sort_by: {
                 type: "string",

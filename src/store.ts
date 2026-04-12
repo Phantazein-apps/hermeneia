@@ -57,6 +57,7 @@ export async function initStore(dataDir: string): Promise<void> {
       account_id TEXT NOT NULL DEFAULT 'default',
       name TEXT,
       last_message_time TEXT,
+      unread_count INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (jid, account_id)
     )
   `);
@@ -111,6 +112,8 @@ export async function initStore(dataDir: string): Promise<void> {
   migrateAddAccountId();
   // Migrate: add media_info column if missing
   migrateAddMediaInfo();
+  // Migrate: add unread_count column if missing
+  migrateAddUnreadCount();
 
   // Flush on exit
   process.on("exit", flush);
@@ -193,6 +196,28 @@ function migrateAddMediaInfo(): void {
   } catch (err) {
     console.error("[hermeneia] media_info migration error:", err);
   }
+}
+
+function migrateAddUnreadCount(): void {
+  const cols = db.exec("PRAGMA table_info(chats)");
+  if (!cols.length) return;
+  const has = cols[0].values.some((row: any[]) => row[1] === "unread_count");
+  if (has) return;
+
+  try {
+    db.run("ALTER TABLE chats ADD COLUMN unread_count INTEGER NOT NULL DEFAULT 0");
+    console.error("[hermeneia] Added unread_count column to chats table");
+    flush();
+  } catch (err) {
+    console.error("[hermeneia] unread_count migration error:", err);
+  }
+}
+
+export function incrementUnread(accountId: string, chatJid: string): void {
+  db.run(
+    "UPDATE chats SET unread_count = unread_count + 1 WHERE jid = ? AND account_id = ?",
+    [chatJid, accountId]
+  );
 }
 
 // ── Contact operations ─────────────────────────────────────────────
@@ -292,16 +317,29 @@ export function upsertChat(
   accountId: string,
   jid: string,
   name: string | null,
-  lastMessageTime: string
+  lastMessageTime: string,
+  unreadCount?: number
 ): void {
-  db.run(
-    `INSERT INTO chats (jid, account_id, name, last_message_time)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT(jid, account_id) DO UPDATE SET
-       name = COALESCE(excluded.name, chats.name),
-       last_message_time = MAX(excluded.last_message_time, chats.last_message_time)`,
-    [jid, accountId, name, lastMessageTime]
-  );
+  if (unreadCount !== undefined) {
+    db.run(
+      `INSERT INTO chats (jid, account_id, name, last_message_time, unread_count)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(jid, account_id) DO UPDATE SET
+         name = COALESCE(excluded.name, chats.name),
+         last_message_time = MAX(excluded.last_message_time, chats.last_message_time),
+         unread_count = excluded.unread_count`,
+      [jid, accountId, name, lastMessageTime, unreadCount]
+    );
+  } else {
+    db.run(
+      `INSERT INTO chats (jid, account_id, name, last_message_time)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(jid, account_id) DO UPDATE SET
+         name = COALESCE(excluded.name, chats.name),
+         last_message_time = MAX(excluded.last_message_time, chats.last_message_time)`,
+      [jid, accountId, name, lastMessageTime]
+    );
+  }
   maybeFlush();
 }
 
@@ -509,6 +547,7 @@ export function listChats(opts: {
   page?: number;
   includeLastMessage?: boolean;
   sortBy?: "last_active" | "name";
+  unreadOnly?: boolean;
 }): ChatDict[] {
   const limit = Math.min(opts.limit ?? 50, 200);
   const page = opts.page ?? 0;
@@ -527,6 +566,9 @@ export function listChats(opts: {
     where.push("(LOWER(c.name) LIKE LOWER(?) OR c.jid LIKE ?)");
     params.push(`%${opts.query}%`, `%${opts.query}%`);
   }
+  if (opts.unreadOnly) {
+    where.push("c.unread_count > 0");
+  }
 
   const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
   const incLast = opts.includeLastMessage !== false;
@@ -538,7 +580,7 @@ export function listChats(opts: {
     : "NULL AS last_message, NULL AS last_sender, NULL AS last_is_from_me";
 
   const sql = `
-    SELECT c.jid, c.account_id, c.name, c.last_message_time, ${selectLast}
+    SELECT c.jid, c.account_id, c.name, c.last_message_time, c.unread_count, ${selectLast}
     FROM chats c ${joinClause}
     ${whereClause}
     ORDER BY ${orderBy}
@@ -552,6 +594,7 @@ export function listChats(opts: {
       name: r.name || resolveContactName(r.jid, r.account_id) || r.jid.split("@")[0],
       is_group: (r.jid as string).endsWith("@g.us"),
       last_message_time: r.last_message_time,
+      unread_count: r.unread_count ?? 0,
       last_message: r.last_message,
       last_sender: r.last_sender,
       last_is_from_me: r.last_is_from_me != null ? !!r.last_is_from_me : null,

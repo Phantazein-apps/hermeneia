@@ -28174,6 +28174,7 @@ async function initStore(dataDir2) {
       account_id TEXT NOT NULL DEFAULT 'default',
       name TEXT,
       last_message_time TEXT,
+      unread_count INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (jid, account_id)
     )
   `);
@@ -28221,6 +28222,7 @@ async function initStore(dataDir2) {
   );
   migrateAddAccountId();
   migrateAddMediaInfo();
+  migrateAddUnreadCount();
   process.on("exit", flush);
   process.on("SIGINT", () => {
     flush();
@@ -28289,6 +28291,25 @@ function migrateAddMediaInfo() {
     console.error("[hermeneia] media_info migration error:", err);
   }
 }
+function migrateAddUnreadCount() {
+  const cols = db.exec("PRAGMA table_info(chats)");
+  if (!cols.length) return;
+  const has = cols[0].values.some((row) => row[1] === "unread_count");
+  if (has) return;
+  try {
+    db.run("ALTER TABLE chats ADD COLUMN unread_count INTEGER NOT NULL DEFAULT 0");
+    console.error("[hermeneia] Added unread_count column to chats table");
+    flush();
+  } catch (err) {
+    console.error("[hermeneia] unread_count migration error:", err);
+  }
+}
+function incrementUnread(accountId, chatJid) {
+  db.run(
+    "UPDATE chats SET unread_count = unread_count + 1 WHERE jid = ? AND account_id = ?",
+    [chatJid, accountId]
+  );
+}
 function upsertContact(accountId, opts) {
   db.run(
     `INSERT INTO contacts (id, account_id, lid, phone_jid, name, notify, verified_name)
@@ -28347,15 +28368,27 @@ function resolveContactName(jid, accountId) {
   if (chat?.name) return chat.name;
   return null;
 }
-function upsertChat(accountId, jid, name, lastMessageTime) {
-  db.run(
-    `INSERT INTO chats (jid, account_id, name, last_message_time)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT(jid, account_id) DO UPDATE SET
-       name = COALESCE(excluded.name, chats.name),
-       last_message_time = MAX(excluded.last_message_time, chats.last_message_time)`,
-    [jid, accountId, name, lastMessageTime]
-  );
+function upsertChat(accountId, jid, name, lastMessageTime, unreadCount) {
+  if (unreadCount !== void 0) {
+    db.run(
+      `INSERT INTO chats (jid, account_id, name, last_message_time, unread_count)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(jid, account_id) DO UPDATE SET
+         name = COALESCE(excluded.name, chats.name),
+         last_message_time = MAX(excluded.last_message_time, chats.last_message_time),
+         unread_count = excluded.unread_count`,
+      [jid, accountId, name, lastMessageTime, unreadCount]
+    );
+  } else {
+    db.run(
+      `INSERT INTO chats (jid, account_id, name, last_message_time)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(jid, account_id) DO UPDATE SET
+         name = COALESCE(excluded.name, chats.name),
+         last_message_time = MAX(excluded.last_message_time, chats.last_message_time)`,
+      [jid, accountId, name, lastMessageTime]
+    );
+  }
   maybeFlush();
 }
 function storeMessage(accountId, id, chatJid, sender, content, timestamp, isFromMe, mediaType, filename, mediaInfo = null) {
@@ -28517,12 +28550,15 @@ function listChats(opts) {
     where.push("(LOWER(c.name) LIKE LOWER(?) OR c.jid LIKE ?)");
     params.push(`%${opts.query}%`, `%${opts.query}%`);
   }
+  if (opts.unreadOnly) {
+    where.push("c.unread_count > 0");
+  }
   const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
   const incLast = opts.includeLastMessage !== false;
   const joinClause = incLast ? "LEFT JOIN messages m ON c.jid = m.chat_jid AND c.account_id = m.account_id AND c.last_message_time = m.timestamp" : "";
   const selectLast = incLast ? "m.content AS last_message, m.sender AS last_sender, m.is_from_me AS last_is_from_me" : "NULL AS last_message, NULL AS last_sender, NULL AS last_is_from_me";
   const sql = `
-    SELECT c.jid, c.account_id, c.name, c.last_message_time, ${selectLast}
+    SELECT c.jid, c.account_id, c.name, c.last_message_time, c.unread_count, ${selectLast}
     FROM chats c ${joinClause}
     ${whereClause}
     ORDER BY ${orderBy}
@@ -28535,6 +28571,7 @@ function listChats(opts) {
       name: r.name || resolveContactName(r.jid, r.account_id) || r.jid.split("@")[0],
       is_group: r.jid.endsWith("@g.us"),
       last_message_time: r.last_message_time,
+      unread_count: r.unread_count ?? 0,
       last_message: r.last_message,
       last_sender: r.last_sender,
       last_is_from_me: r.last_is_from_me != null ? !!r.last_is_from_me : null
@@ -28842,6 +28879,9 @@ var WhatsAppBridge = class extends EventEmitter {
         const pushName = evt.push_name ?? null;
         const mediaInfo = evt.media_info ? JSON.stringify(evt.media_info) : null;
         upsertChat(this._accountId, chatJid, null, timestamp);
+        if (!isFromMe) {
+          incrementUnread(this._accountId, chatJid);
+        }
         if (content || mediaType) {
           storeMessage(
             this._accountId,
@@ -28869,7 +28909,7 @@ var WhatsAppBridge = class extends EventEmitter {
         break;
       }
       case "chat":
-        upsertChat(this._accountId, evt.jid, evt.name || null, evt.last_message_time);
+        upsertChat(this._accountId, evt.jid, evt.name || null, evt.last_message_time, evt.unread_count ?? void 0);
         break;
       case "contact":
         upsertContact(this._accountId, {
@@ -29569,7 +29609,8 @@ Use the add_account tool to connect a new account, or check if an existing accou
               limit: args?.limit,
               page: args?.page,
               includeLastMessage: args?.include_last_message,
-              sortBy: args?.sort_by
+              sortBy: args?.sort_by,
+              unreadOnly: args?.unread_only
             })
           );
         }
@@ -29824,7 +29865,7 @@ Use the add_account tool to connect a new account, or check if an existing accou
         },
         {
           name: "list_chats",
-          description: "List WhatsApp chats with metadata. Searches all accounts by default.",
+          description: "List WhatsApp chats with metadata. Searches all accounts by default. Use unread_only to get chats with unread messages.",
           inputSchema: {
             type: "object",
             properties: {
@@ -29834,6 +29875,10 @@ Use the add_account tool to connect a new account, or check if an existing accou
               include_last_message: {
                 type: "boolean",
                 description: "Include last message (default true)"
+              },
+              unread_only: {
+                type: "boolean",
+                description: "Only return chats with unread messages"
               },
               sort_by: {
                 type: "string",
