@@ -178,6 +178,7 @@ export function registerTools(server: Server, manager: BridgeManager): void {
               senderPhoneNumber: args?.sender_phone_number as string | undefined,
               chatJid: args?.chat_jid as string | undefined,
               query: args?.query as string | undefined,
+              isFromMe: args?.is_from_me as boolean | undefined,
               limit: args?.limit as number | undefined,
               page: args?.page as number | undefined,
               sortBy: args?.sort_by as "newest" | "oldest" | undefined,
@@ -457,6 +458,7 @@ export function registerTools(server: Server, manager: BridgeManager): void {
               },
               chat_jid: { type: "string", description: "Filter by chat JID" },
               query: { type: "string", description: "Search term" },
+              is_from_me: { type: "boolean", description: "Filter by sent (true) or received (false) messages" },
               limit: { type: "number", description: "Max results (default 50)" },
               page: {
                 type: "number",

@@ -458,6 +458,7 @@ export function listMessages(opts: {
   senderPhoneNumber?: string;
   chatJid?: string;
   query?: string;
+  isFromMe?: boolean;
   limit?: number;
   page?: number;
   sortBy?: "newest" | "oldest";
@@ -493,6 +494,10 @@ export function listMessages(opts: {
   if (opts.query) {
     where.push("LOWER(m.content) LIKE LOWER(?)");
     params.push(`%${opts.query}%`);
+  }
+  if (opts.isFromMe !== undefined) {
+    where.push("m.is_from_me = ?");
+    params.push(opts.isFromMe ? 1 : 0);
   }
 
   const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";

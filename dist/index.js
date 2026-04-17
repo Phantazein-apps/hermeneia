@@ -28508,6 +28508,10 @@ function listMessages(opts) {
     where.push("LOWER(m.content) LIKE LOWER(?)");
     params.push(`%${opts.query}%`);
   }
+  if (opts.isFromMe !== void 0) {
+    where.push("m.is_from_me = ?");
+    params.push(opts.isFromMe ? 1 : 0);
+  }
   const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
   const sql = `
     SELECT m.id, m.chat_jid, m.account_id, m.sender, m.content, m.timestamp,
@@ -29628,6 +29632,7 @@ Use the add_account tool to connect a new account, or check if an existing accou
               senderPhoneNumber: args?.sender_phone_number,
               chatJid: args?.chat_jid,
               query: args?.query,
+              isFromMe: args?.is_from_me,
               limit: args?.limit,
               page: args?.page,
               sortBy: args?.sort_by
@@ -29866,6 +29871,7 @@ Use the add_account tool to connect a new account, or check if an existing accou
               },
               chat_jid: { type: "string", description: "Filter by chat JID" },
               query: { type: "string", description: "Search term" },
+              is_from_me: { type: "boolean", description: "Filter by sent (true) or received (false) messages" },
               limit: { type: "number", description: "Max results (default 50)" },
               page: {
                 type: "number",
