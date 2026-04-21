@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "hermeneia",
   "display_name": "WhatsApp (Hermeneia)",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "description": "Read, search, and send WhatsApp messages from Claude. Drag to install, scan a QR code, and you're done.",
   "author": {
     "name": "Phantazein S.L."
@@ -17,10 +17,7 @@
     "entry_point": "dist/index.js",
     "mcp_config": {
       "command": "node",
-      "args": ["${__dirname}/dist/index.js"],
-      "env": {
-        "HERMENEIA_DATA_DIR": "${__dirname}/data"
-      }
+      "args": ["${__dirname}/dist/index.js"]
     }
   },
   "user_config": {
