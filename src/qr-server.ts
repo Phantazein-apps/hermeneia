@@ -22,6 +22,10 @@ interface QRSession {
 }
 const sessions = new Map<string, QRSession>();
 
+// Tracks accounts whose setup page we've already auto-opened in this process,
+// so subsequent QR regenerations / bridge respawns don't pop new browser tabs.
+const autoOpenedAccounts = new Set<string>();
+
 function getOrCreateSession(bridge: WhatsAppBridge, accountId: string): QRSession {
   let session = sessions.get(accountId);
   if (!session) {
@@ -310,8 +314,14 @@ export function startQRServer(
       hasExistingAuth = accounts.some((a: any) => a.id === accountId && a.phone);
     }
   } catch {}
-  if (!hasExistingAuth) {
-    // Wait briefly for listen to succeed, then open browser with actual port
+  // Only auto-open the browser the FIRST time we emit a QR for this account
+  // in this process. whatsmeow regenerates QRs (every ~14 min when one expires)
+  // and our manager respawns bridges on exit — both fire "qr" events that
+  // land here. Without dedupe, each one pops a new browser tab, producing the
+  // "QR window loop" the user sees. The setup page polls /api/status for fresh
+  // QRs, so a single open tab is sufficient.
+  if (!hasExistingAuth && !autoOpenedAccounts.has(accountId)) {
+    autoOpenedAccounts.add(accountId);
     setTimeout(() => {
       const actualPort = (server?.address() as any)?.port ?? port;
       const setupUrl = accountId === "default"
@@ -319,8 +329,10 @@ export function startQRServer(
         : `http://localhost:${actualPort}/setup/${accountId}`;
       openBrowser(setupUrl);
     }, 500);
-  } else {
+  } else if (hasExistingAuth) {
     log(`QR generated during reconnect for "${accountId}" — not auto-opening browser`);
+  } else {
+    log(`QR regenerated for "${accountId}" — setup page already open, not reopening`);
   }
 }
 

@@ -29455,6 +29455,7 @@ import { join as join3 } from "path";
 var log3 = (msg) => console.error(`[hermeneia:qr] ${msg}`);
 var server = null;
 var sessions = /* @__PURE__ */ new Map();
+var autoOpenedAccounts = /* @__PURE__ */ new Set();
 function getOrCreateSession(bridge, accountId) {
   let session = sessions.get(accountId);
   if (!session) {
@@ -29707,14 +29708,17 @@ function startQRServer(bridge, port = 3456, initialQr, dataDir2, accountId = "de
     }
   } catch {
   }
-  if (!hasExistingAuth) {
+  if (!hasExistingAuth && !autoOpenedAccounts.has(accountId)) {
+    autoOpenedAccounts.add(accountId);
     setTimeout(() => {
       const actualPort = server?.address()?.port ?? port;
       const setupUrl = accountId === "default" ? `http://localhost:${actualPort}/setup` : `http://localhost:${actualPort}/setup/${accountId}`;
       openBrowser(setupUrl);
     }, 500);
-  } else {
+  } else if (hasExistingAuth) {
     log3(`QR generated during reconnect for "${accountId}" \u2014 not auto-opening browser`);
+  } else {
+    log3(`QR regenerated for "${accountId}" \u2014 setup page already open, not reopening`);
   }
 }
 function stopQRServer() {
@@ -30822,7 +30826,7 @@ async function main() {
   const mcpServer = new Server(
     {
       name: "hermeneia",
-      version: "0.4.6"
+      version: "0.4.7"
     },
     {
       capabilities: {
