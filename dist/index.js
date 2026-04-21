@@ -4328,11 +4328,11 @@ var require_core = __commonJS({
     Ajv2.ValidationError = validation_error_1.default;
     Ajv2.MissingRefError = ref_error_1.default;
     exports.default = Ajv2;
-    function checkOptions(checkOpts, options, msg, log6 = "error") {
+    function checkOptions(checkOpts, options, msg, log7 = "error") {
       for (const key in checkOpts) {
         const opt = key;
         if (opt in options)
-          this.logger[log6](`${msg}: option ${key}. ${checkOpts[opt]}`);
+          this.logger[log7](`${msg}: option ${key}. ${checkOpts[opt]}`);
       }
     }
     function getSchEnv(keyRef) {
@@ -9729,7 +9729,7 @@ var require_galois_field = __commonJS({
         EXP_TABLE[i] = EXP_TABLE[i - 255];
       }
     })();
-    exports.log = function log6(n) {
+    exports.log = function log7(n) {
       if (n < 1) throw new Error("log(" + n + ")");
       return LOG_TABLE[n];
     };
@@ -28114,9 +28114,9 @@ var StdioServerTransport = class {
 };
 
 // src/index.ts
-import { join as join5, dirname as dirname3 } from "path";
+import { join as join6, dirname as dirname3 } from "path";
 import { homedir } from "os";
-import { existsSync as existsSync4, cpSync as cpSync2, mkdirSync as mkdirSync4 } from "fs";
+import { existsSync as existsSync5, cpSync as cpSync2, mkdirSync as mkdirSync5 } from "fs";
 import { fileURLToPath as fileURLToPath4 } from "url";
 
 // src/bridge-manager.ts
@@ -30725,50 +30725,104 @@ function guessMime(filePath) {
   return map2[ext ?? ""] ?? "application/octet-stream";
 }
 
+// src/lockfile.ts
+import { readFileSync as readFileSync5, writeFileSync as writeFileSync3, unlinkSync, existsSync as existsSync4, mkdirSync as mkdirSync4 } from "fs";
+import { join as join5 } from "path";
+var log5 = (msg) => console.error(`[hermeneia:lock] ${msg}`);
+var lockPath = null;
+function acquireLock(dataDir2) {
+  mkdirSync4(dataDir2, { recursive: true });
+  lockPath = join5(dataDir2, "hermeneia.pid");
+  if (existsSync4(lockPath)) {
+    const raw = readFileSync5(lockPath, "utf-8").trim();
+    const pid = parseInt(raw, 10);
+    if (pid > 0 && isAlive(pid)) {
+      log5(`Another Hermeneia is already running (PID ${pid}) \u2014 exiting cleanly.`);
+      return false;
+    }
+    log5(`Stale lock (PID ${raw}) \u2014 taking over.`);
+  }
+  writeFileSync3(lockPath, String(process.pid));
+  log5(`Lock acquired (PID ${process.pid})`);
+  const release = () => {
+    try {
+      if (lockPath && existsSync4(lockPath)) {
+        const raw = readFileSync5(lockPath, "utf-8").trim();
+        if (parseInt(raw, 10) === process.pid) {
+          unlinkSync(lockPath);
+        }
+      }
+    } catch {
+    }
+  };
+  process.on("exit", release);
+  process.on("SIGINT", () => {
+    release();
+    process.exit(0);
+  });
+  process.on("SIGTERM", () => {
+    release();
+    process.exit(0);
+  });
+  return true;
+}
+function isAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // src/index.ts
 var __dirname5 = dirname3(fileURLToPath4(import.meta.url));
-var log5 = (msg) => console.error(`[hermeneia] ${msg}`);
+var log6 = (msg) => console.error(`[hermeneia] ${msg}`);
 function getDataDir() {
   if (process.env.HERMENEIA_DATA_DIR) return process.env.HERMENEIA_DATA_DIR;
   if (process.env.WHATSAPP_DATA_DIR) return process.env.WHATSAPP_DATA_DIR;
   if (process.platform === "darwin") {
-    return join5(homedir(), "Library", "Application Support", "Hermeneia");
+    return join6(homedir(), "Library", "Application Support", "Hermeneia");
   } else if (process.platform === "win32") {
-    return join5(process.env.APPDATA ?? join5(homedir(), "AppData", "Roaming"), "Hermeneia");
+    return join6(process.env.APPDATA ?? join6(homedir(), "AppData", "Roaming"), "Hermeneia");
   }
-  return join5(homedir(), ".hermeneia");
+  return join6(homedir(), ".hermeneia");
 }
 var dataDir = getDataDir();
 function migrateOldDataDir() {
-  const oldDir = join5(__dirname5, "..", "data");
+  const oldDir = join6(__dirname5, "..", "data");
   if (oldDir === dataDir) return;
-  if (!existsSync4(oldDir)) return;
-  if (existsSync4(join5(dataDir, "accounts.json"))) return;
-  log5(`Migrating data from ${oldDir} to ${dataDir}`);
-  mkdirSync4(dataDir, { recursive: true });
+  if (!existsSync5(oldDir)) return;
+  if (existsSync5(join6(dataDir, "accounts.json"))) return;
+  log6(`Migrating data from ${oldDir} to ${dataDir}`);
+  mkdirSync5(dataDir, { recursive: true });
   cpSync2(oldDir, dataDir, { recursive: true });
-  log5("Data migration complete");
+  log6("Data migration complete");
 }
 var qrPort = parseInt(process.env.HERMENEIA_QR_PORT ?? "3456", 10);
 async function main() {
-  log5("Starting Hermeneia...");
+  log6("Starting Hermeneia...");
   migrateOldDataDir();
-  log5(`Data directory: ${dataDir}`);
+  log6(`Data directory: ${dataDir}`);
+  if (!acquireLock(dataDir)) {
+    await new Promise((resolve) => setTimeout(resolve, 2e3));
+    process.exit(0);
+  }
   await initStore(dataDir);
-  log5("Message store ready");
+  log6("Message store ready");
   const mirrorInfo = initMirror();
-  log5(`Epistole mirror: ${mirrorInfo.info}`);
+  log6(`Epistole mirror: ${mirrorInfo.info}`);
   const manager = new BridgeManager(dataDir, qrPort);
   manager.setMessageHandler((accountId, msg) => {
     const dir = msg.isFromMe ? "\u2192" : "\u2190";
     const preview = msg.content?.substring(0, 60) ?? "[media]";
-    log5(`[${accountId}] ${dir} ${msg.sender}: ${preview}`);
+    log6(`[${accountId}] ${dir} ${msg.sender}: ${preview}`);
   });
   await manager.startup();
   const mcpServer = new Server(
     {
       name: "hermeneia",
-      version: "0.4.4"
+      version: "0.4.5"
     },
     {
       capabilities: {
@@ -30780,9 +30834,9 @@ async function main() {
   registerTools(mcpServer, manager);
   const transport = new StdioServerTransport();
   await mcpServer.connect(transport);
-  log5("MCP server running on stdio");
+  log6("MCP server running on stdio");
   const shutdown = async () => {
-    log5("Shutting down...");
+    log6("Shutting down...");
     stopQRServer();
     await manager.stopAll();
     await mcpServer.close();
