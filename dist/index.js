@@ -28877,7 +28877,7 @@ var log = (msg) => console.error(`[hermeneia:mirror] ${msg}`);
 var DEBOUNCE_MS = 1500;
 var BATCH_THRESHOLD = 50;
 var QUEUE_CAP = 500;
-var REQUEST_TIMEOUT_MS = 15e3;
+var REQUEST_TIMEOUT_MS = 9e4;
 var BACKOFF_MIN_MS = 5e3;
 var BACKOFF_MAX_MS = 6e4;
 var LOG_RATELIMIT_MS = 6e4;
@@ -30826,7 +30826,7 @@ async function main() {
   const mcpServer = new Server(
     {
       name: "hermeneia",
-      version: "0.4.9"
+      version: "0.4.10"
     },
     {
       capabilities: {

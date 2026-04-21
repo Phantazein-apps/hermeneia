@@ -52,7 +52,13 @@ interface AccountQueue {
 const DEBOUNCE_MS = 1500;
 const BATCH_THRESHOLD = 50;
 const QUEUE_CAP = 500;
-const REQUEST_TIMEOUT_MS = 15_000;
+// Epistole's /api/wa/push generates embeddings for every message in the batch
+// via Cloudflare Workers AI, which can easily exceed 15s under load. A tight
+// timeout here caused the live mirror and backfill to abort + back off
+// repeatedly, producing huge throughput collapse. 90s comfortably covers
+// 100-message batches with headroom; the heartbeat + other calls inherit the
+// same ceiling but complete in ms when healthy.
+const REQUEST_TIMEOUT_MS = 90_000;
 const BACKOFF_MIN_MS = 5_000;
 const BACKOFF_MAX_MS = 60_000;
 const LOG_RATELIMIT_MS = 60_000;
