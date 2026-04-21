@@ -199,6 +199,20 @@ New messages arriving after you enable the mirror ship automatically. To backfil
 
 You can cap the run with `max_batches: N` (each batch is 100 messages, newest-first) if you want to trickle a large history over multiple sessions. For a large `personal` account that's tens of thousands of messages, start with `max_batches: 5` to confirm Epistole's ingestion before committing to the whole history.
 
+### Where to run `epistole_backfill`
+
+**Only from a regular Claude Desktop chat** — the normal chat window in the macOS Claude Desktop app. That's the only surface where Hermeneia's tools are visible.
+
+Places the tool *won't* be available:
+
+- **Cowork** — runs your task in the cloud, can only reach remote/cloud MCPs. Hermeneia is a local Mac-only extension.
+- **Claude mobile / Claude.ai web** — same reason. They can't reach the Node process sitting on your Mac.
+- **Claude Code** (CLI) — uses its own MCP config, doesn't automatically include Claude Desktop's extensions.
+
+If you try to run `epistole_backfill` from any of those and see *"no tool called epistole_backfill available"*, it's not broken — you're on the wrong surface. Switch to a regular Claude Desktop chat.
+
+This split is intentional and is actually the point of the mirror: you **backfill and live-mirror from the Mac** (writer side), then **search the mirrored data from anywhere via Epistole's `semantic_search`** (reader side — works from mobile, web, Cowork, Code, everywhere).
+
 ### Watchdog (independent of the mirror)
 
 Hermeneia monitors each connected bridge for event activity. If no events arrive from a connected account for `HERMENEIA_WATCHDOG_TIMEOUT_MS` (default 5 min), the Go subprocess is SIGKILLed and respawned with exponential backoff (5s → 30s cap). This is always on; the mirror has nothing to do with it.
