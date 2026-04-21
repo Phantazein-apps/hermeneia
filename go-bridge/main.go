@@ -182,12 +182,27 @@ func handleEvent(rawEvt interface{}) {
 	case *events.HistorySync:
 		handleHistorySync(evt)
 
+	case *events.OfflineSyncPreview:
+		logf("Offline sync: %d messages, %d receipts, %d notifications missed",
+			evt.Messages, evt.Receipts, evt.Notifications)
+
+	case *events.OfflineSyncCompleted:
+		logf("Offline sync completed: %d events replayed", evt.Count)
+
+	case *events.Receipt:
+		// Read/delivered receipts — useful for debugging message flow
+		logf("Receipt: type=%s chat=%s sender=%s ids=%v",
+			evt.Type, evt.Chat, evt.Sender, evt.MessageIDs)
+
 	case *events.Disconnected:
 		logf("Disconnected, will auto-reconnect")
 
 	case *events.StreamReplaced:
 		logf("Stream replaced (another device connected)")
 		os.Exit(0)
+
+	default:
+		logf("Unhandled event: %T", rawEvt)
 	}
 }
 
@@ -201,20 +216,30 @@ func handleMessage(evt *events.Message) {
 	timestamp := info.Timestamp.UTC().Format(time.RFC3339)
 	messageID := info.ID
 
+	// Debug: log every message with proto field summary
+	logf("MSG id=%s chat=%s sender=%s fromMe=%v fields=[%s]",
+		messageID, chatJID, sender, isFromMe, describeProtoFields(evt.Message))
+	if evt.IsEphemeral {
+		logf("  -> was ephemeral (unwrapped by whatsmeow)")
+	}
+
+	// Unwrap ephemeral/view-once/edited wrappers
+	innerMsg := unwrapMessage(evt.Message)
+
 	// Extract text
-	content := extractText(evt.Message)
+	content := extractText(innerMsg)
 
 	// Extract media type and info
 	var mediaType *string
-	mt := extractMediaType(evt.Message)
+	mt := extractMediaType(innerMsg)
 	if mt != "" {
 		mediaType = &mt
 		// Cache for in-session fast download
 		mediaCacheMu.Lock()
-		mediaCache[messageID] = evt.Message
+		mediaCache[messageID] = innerMsg
 		mediaCacheMu.Unlock()
 	}
-	mediaInfo := extractMediaInfo(evt.Message)
+	mediaInfo := extractMediaInfo(innerMsg)
 
 	// Get push name
 	pushName := info.PushName
@@ -238,7 +263,109 @@ func handleMessage(evt *events.Message) {
 	})
 }
 
+// describeProtoFields returns a human-readable summary of which proto fields
+// are non-nil in a message, for debug logging.
+func describeProtoFields(msg *waE2E.Message) string {
+	if msg == nil {
+		return "<nil>"
+	}
+	var fields []string
+	if msg.Conversation != nil {
+		fields = append(fields, "Conversation")
+	}
+	if msg.ExtendedTextMessage != nil {
+		fields = append(fields, "ExtendedText")
+	}
+	if msg.ImageMessage != nil {
+		fields = append(fields, "Image")
+	}
+	if msg.VideoMessage != nil {
+		fields = append(fields, "Video")
+	}
+	if msg.AudioMessage != nil {
+		fields = append(fields, "Audio")
+	}
+	if msg.DocumentMessage != nil {
+		fields = append(fields, "Document")
+	}
+	if msg.StickerMessage != nil {
+		fields = append(fields, "Sticker")
+	}
+	if msg.EphemeralMessage != nil {
+		fields = append(fields, "Ephemeral")
+	}
+	if msg.ViewOnceMessage != nil {
+		fields = append(fields, "ViewOnce")
+	}
+	if msg.ViewOnceMessageV2 != nil {
+		fields = append(fields, "ViewOnceV2")
+	}
+	if msg.EditedMessage != nil {
+		fields = append(fields, "Edited")
+	}
+	if msg.DocumentWithCaptionMessage != nil {
+		fields = append(fields, "DocWithCaption")
+	}
+	if msg.ProtocolMessage != nil {
+		fields = append(fields, fmt.Sprintf("Protocol(%v)", msg.ProtocolMessage.GetType()))
+	}
+	if msg.SenderKeyDistributionMessage != nil {
+		fields = append(fields, "SenderKeyDist")
+	}
+	if msg.ContactMessage != nil {
+		fields = append(fields, "Contact")
+	}
+	if msg.LocationMessage != nil {
+		fields = append(fields, "Location")
+	}
+	if msg.LiveLocationMessage != nil {
+		fields = append(fields, "LiveLocation")
+	}
+	if msg.ReactionMessage != nil {
+		fields = append(fields, "Reaction")
+	}
+	if msg.PollCreationMessage != nil {
+		fields = append(fields, "Poll")
+	}
+	if msg.PollUpdateMessage != nil {
+		fields = append(fields, "PollUpdate")
+	}
+	if len(fields) == 0 {
+		return "<empty>"
+	}
+	return strings.Join(fields, ",")
+}
+
+// unwrapMessage peels off wrapper types (ephemeral, view-once, edited)
+// to get to the actual message content.
+func unwrapMessage(msg *waE2E.Message) *waE2E.Message {
+	if msg == nil {
+		return nil
+	}
+	// Ephemeral (disappearing) messages
+	if msg.EphemeralMessage != nil && msg.EphemeralMessage.Message != nil {
+		return unwrapMessage(msg.EphemeralMessage.Message)
+	}
+	// View-once messages (v1 and v2)
+	if msg.ViewOnceMessage != nil && msg.ViewOnceMessage.Message != nil {
+		return unwrapMessage(msg.ViewOnceMessage.Message)
+	}
+	if msg.ViewOnceMessageV2 != nil && msg.ViewOnceMessageV2.Message != nil {
+		return unwrapMessage(msg.ViewOnceMessageV2.Message)
+	}
+	// Edited messages — use the latest version
+	if msg.EditedMessage != nil && msg.EditedMessage.Message != nil {
+		return unwrapMessage(msg.EditedMessage.Message)
+	}
+	// Document-with-caption wrapper
+	if msg.DocumentWithCaptionMessage != nil && msg.DocumentWithCaptionMessage.Message != nil {
+		return unwrapMessage(msg.DocumentWithCaptionMessage.Message)
+	}
+	return msg
+}
+
 func extractText(msg *waE2E.Message) string {
+	msg = unwrapMessage(msg)
 	if msg == nil {
 		return ""
 	}
@@ -257,10 +384,30 @@ func extractText(msg *waE2E.Message) string {
 	if msg.DocumentMessage != nil && msg.DocumentMessage.Caption != nil {
 		return *msg.DocumentMessage.Caption
 	}
+	if msg.ContactMessage != nil {
+		return fmt.Sprintf("[Contact: %s]", msg.ContactMessage.GetDisplayName())
+	}
+	if msg.LocationMessage != nil {
+		return fmt.Sprintf("[Location: %.4f, %.4f]",
+			msg.LocationMessage.GetDegreesLatitude(),
+			msg.LocationMessage.GetDegreesLongitude())
+	}
+	if msg.LiveLocationMessage != nil {
+		return fmt.Sprintf("[Live Location: %.4f, %.4f]",
+			msg.LiveLocationMessage.GetDegreesLatitude(),
+			msg.LiveLocationMessage.GetDegreesLongitude())
+	}
+	if msg.ReactionMessage != nil {
+		return fmt.Sprintf("[Reaction: %s]", msg.ReactionMessage.GetText())
+	}
+	if msg.PollCreationMessage != nil {
+		return fmt.Sprintf("[Poll: %s]", msg.PollCreationMessage.GetName())
+	}
 	return ""
 }
 
 func extractMediaInfo(msg *waE2E.Message) *MediaInfo {
+	msg = unwrapMessage(msg)
 	if msg == nil {
 		return nil
 	}
@@ -311,6 +458,7 @@ func extractMediaInfo(msg *waE2E.Message) *MediaInfo {
 }
 
 func extractMediaType(msg *waE2E.Message) string {
+	msg = unwrapMessage(msg)
 	if msg == nil {
 		return ""
 	}
