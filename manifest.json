@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "hermeneia",
   "display_name": "WhatsApp (Hermeneia)",
-  "version": "0.4.7",
+  "version": "0.4.8",
   "description": "Read, search, and send WhatsApp messages from Claude. Drag to install, scan a QR code, and you're done.",
   "author": {
     "name": "Phantazein S.L."
@@ -17,7 +17,13 @@
     "entry_point": "dist/index.js",
     "mcp_config": {
       "command": "node",
-      "args": ["${__dirname}/dist/index.js"]
+      "args": ["${__dirname}/dist/index.js"],
+      "env": {
+        "HERMENEIA_QR_PORT": "${user_config.qr_port}",
+        "EPISTOLE_MIRROR_URL": "${user_config.epistole_mirror_url}",
+        "EPISTOLE_MIRROR_TOKEN": "${user_config.epistole_mirror_token}",
+        "EPISTOLE_MIRROR_ACCOUNTS": "${user_config.epistole_mirror_accounts}"
+      }
     }
   },
   "user_config": {
@@ -27,6 +33,28 @@
       "description": "Port for the QR code page (default: 3456). Change if the port is in use.",
       "required": false,
       "default": "3456"
+    },
+    "epistole_mirror_url": {
+      "type": "string",
+      "title": "Epistole mirror URL (beta)",
+      "description": "Optional. Base URL of an Epistole server to mirror WhatsApp events to for semantic search / mobile access (e.g. https://your-epistole-host). Leave empty to disable.",
+      "required": false,
+      "default": ""
+    },
+    "epistole_mirror_token": {
+      "type": "string",
+      "title": "Epistole mirror token (beta)",
+      "description": "Bearer token shared with the Epistole server (WA_BRIDGE_TOKEN). Required only if the URL is set.",
+      "sensitive": true,
+      "required": false,
+      "default": ""
+    },
+    "epistole_mirror_accounts": {
+      "type": "string",
+      "title": "Epistole account allowlist (optional)",
+      "description": "Comma-separated account IDs to mirror (e.g. 'personal,work'). Leave empty to mirror all connected accounts.",
+      "required": false,
+      "default": ""
     }
   },
   "tools": [

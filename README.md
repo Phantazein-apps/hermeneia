@@ -114,41 +114,64 @@ Origin chain: [`lharries/whatsapp-mcp`](https://github.com/lharries/whatsapp-mcp
 
 ## Beta: Epistole mirror
 
-Hermeneia can optionally push a copy of incoming WhatsApp events to a remote [Epistole](https://github.com/Phantazein-apps/epistole) Cloudflare Worker so that its `semantic_search` indexes WhatsApp history alongside email. **Off by default.** Enabling the mirror does not change any existing behavior — sends, media, and the local `messages.db` all still live here.
+Hermeneia can optionally push a copy of incoming WhatsApp events to a remote [Epistole](https://github.com/Phantazein-apps/epistole) Cloudflare Worker so that Epistole's `semantic_search` indexes WhatsApp history alongside email. **Off by default.** Enabling the mirror does not change any existing behavior — sends, media, and the local `messages.db` all still live here.
 
-### What it does
+### Why would you want this?
+
+The main reason: **mobile access**. Hermeneia is a desktop-only extension — your WhatsApp history is only searchable from the Mac running Claude Desktop. Epistole is a Cloudflare Worker you control, reachable from anywhere you have a Claude app (iOS, Android, web) via the remote MCP protocol. Turning on the mirror means:
+
+- Ask Claude on your phone *"what did Tyler say about Thursday?"* and get hits from WhatsApp + email in the same answer
+- Semantic search (not just substring) across your WhatsApp messages — *"the message where my mom sent the Airbnb link"*
+- Unified ranking across channels — one query, results from email and WhatsApp interleaved by relevance
+
+It's strictly additive. Your desktop Hermeneia keeps doing everything it did before (sending, media, local search via `list_messages`). The mirror is just a fan-out write pipe for the subset of use cases that benefit from being remote.
+
+### What it mirrors
 
 - After each durable local write (message, chat, contact), best-effort POSTs a copy to `POST /api/wa/push` on your Epistole instance.
 - Batches events (1.5s debounce, 50-event flush) and sends one-way over HTTPS with a Bearer token.
-- Sends a heartbeat every ~60s per connected account.
-- One-shot backfill via the `epistole_backfill` MCP tool — walks existing `messages.db` for an account and ships it in batches.
+- Sends a heartbeat every ~60s per connected account so Epistole knows the bridge is alive.
+- One-shot historical backfill via the `epistole_backfill` MCP tool — walks existing `messages.db` for an account and ships it in batches of 100.
 
 ### What it does NOT do
 
-- **No media bytes are uploaded.** Only metadata (media type, filename, caption).
-- **No remote sends.** Epistole cannot send WhatsApp messages through Hermeneia — the channel is push-only, Hermeneia → Epistole.
-- **No state dependency.** If Epistole is unreachable, the call is dropped after a short backoff; Hermeneia keeps running. Lossy by design.
+- **No media bytes are uploaded.** Only metadata (media type, filename, caption text). Voice notes, photos, docs stay on your Mac.
+- **No remote sends.** Epistole cannot send WhatsApp messages through Hermeneia — the channel is push-only, Hermeneia → Epistole. If you ask Claude on your phone "send Tyler a message", that tool isn't exposed. You'd need to be at your Mac.
+- **No state dependency.** If Epistole is unreachable, the call is dropped after short exponential backoff; Hermeneia keeps running normally. Lossy by design — the local `messages.db` remains the source of truth.
+- **No cloud-locked contacts.** `chat_name` is passed at embedding time only (improves retrieval quality for group-scoped queries); Epistole doesn't store a copy of your contact list beyond what it needs for search.
 
-### Configuration
+### Configuration — the usual way (recommended)
 
-Set these environment variables before launching Hermeneia:
+After installing v0.4.8+ from [Releases](https://github.com/Phantazein-apps/hermeneia/releases/latest):
+
+1. Claude Desktop → **Settings** → **Extensions** → **WhatsApp (Hermeneia)**
+2. Fill in:
+   - **Epistole mirror URL** — the base URL of your Epistole server (e.g. `https://mailstore.example.com`). Leave empty to keep the mirror disabled.
+   - **Epistole mirror token** — the `WA_BRIDGE_TOKEN` secret, same value as on the Epistole side. Stored locally by Claude Desktop.
+   - **Epistole account allowlist** *(optional)* — comma-separated account IDs to mirror, e.g. `personal,work`. Leave empty to mirror **all** connected accounts.
+3. Restart the extension (toggle off then on, or fully quit Claude Desktop and relaunch).
+
+On next start, you should see `[hermeneia] Epistole mirror: https://... (all accounts)` in the MCP server log (`~/Library/Logs/Claude/mcp-server-WhatsApp (Hermeneia).log`).
+
+### Configuration — via environment variables
+
+If you run Hermeneia outside Claude Desktop (e.g. `npm run dev` during development), the same env vars apply directly:
 
 ```bash
 EPISTOLE_MIRROR_URL=https://your-epistole-host
-EPISTOLE_MIRROR_TOKEN=<same secret WA_BRIDGE_TOKEN as on Epistole>
-# Optional — comma-separated account-id allowlist; default is all accounts
-EPISTOLE_MIRROR_ACCOUNTS=personal
+EPISTOLE_MIRROR_TOKEN=<WA_BRIDGE_TOKEN>
+EPISTOLE_MIRROR_ACCOUNTS=personal,work   # optional allowlist
 ```
 
-If either `URL` or `TOKEN` is unset, the mirror is a complete no-op.
+Either `URL` or `TOKEN` unset → mirror is a complete no-op.
 
 ### Initial backfill
 
-From Claude Desktop, once the mirror env vars are set:
+New messages arriving after you enable the mirror ship automatically. To backfill history that was already in `messages.db` when you enabled it, ask Claude:
 
-> "Run `epistole_backfill` on account `personal`."
+> *"Run `epistole_backfill` on account `default`."*
 
-The tool pushes chats and contacts first, then messages newest-first in batches (default 100). You can cap runs with `max_batches` if you want to trickle a large history.
+You can cap the run with `max_batches: N` (each batch is 100 messages, newest-first) if you want to trickle a large history over multiple sessions. For a large `personal` account that's tens of thousands of messages, start with `max_batches: 5` to confirm Epistole's ingestion before committing to the whole history.
 
 ### Watchdog (independent of the mirror)
 
