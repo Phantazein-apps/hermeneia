@@ -1,0 +1,27 @@
+version: 2
+updates:
+  # Node.js dependencies (MCP server, build tools)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      # Batch non-security updates into one PR per week to reduce noise
+      dev-dependencies:
+        dependency-type: "development"
+      prod-dependencies:
+        dependency-type: "production"
+
+  # Go dependencies (whatsmeow bridge)
+  - package-ecosystem: "gomod"
+    directory: "/go-bridge"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+
+  # GitHub Actions (if you add CI workflows)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
