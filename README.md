@@ -114,7 +114,9 @@ Origin chain: [`lharries/whatsapp-mcp`](https://github.com/lharries/whatsapp-mcp
 
 ## Beta: Epistole mirror
 
-Hermeneia can optionally push a copy of incoming WhatsApp events to a remote [Epistole](https://github.com/Phantazein-apps/epistole) Cloudflare Worker so that Epistole's `semantic_search` indexes WhatsApp history alongside email. **Off by default.** Enabling the mirror does not change any existing behavior — sends, media, and the local `messages.db` all still live here.
+> **Not for everyone.** This section only applies if you run (or plan to run) your own [Epistole](https://github.com/Phantazein-apps/epistole) server — a Cloudflare Worker you deploy to your own Cloudflare account. If you don't have one, none of this applies; skip the section and use Hermeneia as-is from your Mac. Setting up Epistole is a separate ~30-minute project; see Epistole's README.
+
+Hermeneia can optionally push a copy of incoming WhatsApp events to a remote Epistole instance so that Epistole's `semantic_search` indexes WhatsApp history alongside email. **Off by default.** Enabling the mirror does not change any existing behavior — sends, media, and the local `messages.db` all still live on your Mac.
 
 ### Why would you want this?
 
@@ -164,6 +166,26 @@ EPISTOLE_MIRROR_ACCOUNTS=personal,work   # optional allowlist
 ```
 
 Either `URL` or `TOKEN` unset → mirror is a complete no-op.
+
+### Where to find your token
+
+The token is a shared password between Epistole (the server) and Hermeneia (this client). You *chose this value yourself* when you first deployed Epistole — it's the `WA_BRIDGE_TOKEN` Cloudflare Worker secret.
+
+To retrieve it:
+
+1. Open [dash.cloudflare.com](https://dash.cloudflare.com) → **Workers & Pages**
+2. Click your Epistole worker (whatever you named it)
+3. **Settings** → **Variables and Secrets**
+4. Look for a secret named `WA_BRIDGE_TOKEN`
+
+**Cloudflare does not show existing secret values** — that's by design, same as any password manager. If you don't have the value saved somewhere:
+
+- Check your password manager (1Password, Bitwarden, Apple Keychain…)
+- Check your shell history: `history | grep WA_BRIDGE_TOKEN`
+- Check Epistole's local dev file: `.dev.vars` or `.env` in the Epistole repo (if you ran it locally)
+- **Or just rotate it.** From Epistole's repo: `wrangler secret put WA_BRIDGE_TOKEN`, enter any new random value, then paste the same value into Hermeneia's config field. Both sides need to match but the value itself is arbitrary — 32+ random characters is typical. Rotating doesn't break anything as long as you update both sides.
+
+Keep the token private. Anyone with it can write mirror data to your Epistole instance (they can't read data back — the write endpoint is one-way — but they could fill your Epistole with junk).
 
 ### Initial backfill
 

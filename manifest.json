@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "hermeneia",
   "display_name": "WhatsApp (Hermeneia)",
-  "version": "0.4.8",
+  "version": "0.4.9",
   "description": "Read, search, and send WhatsApp messages from Claude. Drag to install, scan a QR code, and you're done.",
   "author": {
     "name": "Phantazein S.L."
@@ -36,23 +36,23 @@
     },
     "epistole_mirror_url": {
       "type": "string",
-      "title": "Epistole mirror URL (beta)",
-      "description": "Optional. Base URL of an Epistole server to mirror WhatsApp events to for semantic search / mobile access (e.g. https://your-epistole-host). Leave empty to disable.",
+      "title": "Epistole mirror URL (beta — optional)",
+      "description": "Only relevant if you have your own Epistole server (a Cloudflare Worker you deploy separately — see the Hermeneia README). Enabling this lets you search your WhatsApp history from the Claude mobile apps alongside email. Leave empty if you don't know what this is.",
       "required": false,
       "default": ""
     },
     "epistole_mirror_token": {
       "type": "string",
-      "title": "Epistole mirror token (beta)",
-      "description": "Bearer token shared with the Epistole server (WA_BRIDGE_TOKEN). Required only if the URL is set.",
+      "title": "Epistole mirror token (beta — optional)",
+      "description": "The secret password your Epistole server expects (named WA_BRIDGE_TOKEN on the Epistole side). You set this value when you deployed Epistole. If you can't find it, see the 'Where to find your token' section of the Hermeneia README — you can also rotate it. Leave empty if the URL above is empty.",
       "sensitive": true,
       "required": false,
       "default": ""
     },
     "epistole_mirror_accounts": {
       "type": "string",
-      "title": "Epistole account allowlist (optional)",
-      "description": "Comma-separated account IDs to mirror (e.g. 'personal,work'). Leave empty to mirror all connected accounts.",
+      "title": "Epistole account allowlist (beta — optional)",
+      "description": "Which WhatsApp accounts to mirror, comma-separated (e.g. 'personal,work'). Leave empty to mirror every connected account — this is what most people want.",
       "required": false,
       "default": ""
     }
