@@ -78,6 +78,40 @@ Claude Desktop ←→ MCP (stdio) ←→ Node.js ←→ Go bridge ←→ WhatsAp
                               (local data)
 ```
 
+## How Hermeneia compares
+
+*Last updated: April 21, 2026*
+
+Origin chain: [`lharries/whatsapp-mcp`](https://github.com/lharries/whatsapp-mcp) (original, abandoned April 2025) → [`verygoodplugins/whatsapp-mcp`](https://github.com/verygoodplugins/whatsapp-mcp) (active fork, Python + Go) → Hermeneia (TypeScript + Go rewrite).
+
+### What Hermeneia adds vs the upstream fork
+
+- **TypeScript MCP layer** (vs Python upstream). Same Go/whatsmeow bridge, but ships as a single Node bundle with no Python toolchain.
+- **`.mcpb` drag-and-drop install** vs `git clone` + `uv` setup. Drag onto Claude Desktop, scan QR, done.
+- **Multi-account** - connect personal, work, family, business numbers in parallel; Claude searches across all by default. Upstream is single-account.
+- **Deep history sync on first connect** (3 years / 1,000 msgs per chat). Upstream syncs forward from connection time only.
+- **Inline image display** - `download_media` returns the image so Claude sees photos. Upstream returns file paths.
+- **Unread tracking + filtering** using native WhatsApp counts. Upstream has no unread state.
+- **Archived chat detection** (excluded by default).
+- **Community / parent-group awareness** - chats know which Community they belong to.
+- **Full contact resolution** - phone numbers, LIDs, push names, verified names. Upstream stops at JIDs.
+- **Device shows as "Claude"** in WhatsApp Linked Devices instead of a generic browser string.
+- **17 tools** vs upstream's ~10.
+
+### Vs other WhatsApp MCPs
+
+- **`jlucaso1` (Baileys TS)** - different protocol library; missing whatsmeow's media fidelity. No `.mcpb`, no multi-account.
+- **`wweb-mcp` / `fyimail/whatsapp-mcp2`** - Puppeteer + `whatsapp-web.js`. Brittle, breaks on WhatsApp updates. Author flags it as "testing only."
+- **41-tool extended fork** - broader tool surface (group admin, presence, webhooks) but less polish (no `.mcpb`, no inline images).
+- **WhatsApp Cloud API MCPs** (`wania-kazmi` etc.) - Business API only, can't touch personal accounts. Different product.
+- **Commercial bridges** (Composio, Whapi.Cloud, Maytapi, Telinfy) - paid SaaS routing your messages through their cloud. Hermeneia stays local.
+
+### Trade-offs
+
+- macOS Apple Silicon only for now. Upstream runs anywhere Python + Go runs.
+- No webhook forwarding for incoming messages (upstream `verygoodplugins` has this).
+- No semantic search over message history (IMAP-search-equivalent only).
+
 ## Development
 
 ```bash
