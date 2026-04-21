@@ -157,7 +157,14 @@ Hermeneia monitors each connected bridge for event activity. If no events arrive
 ```bash
 HERMENEIA_WATCHDOG_TIMEOUT_MS=300000  # 5 min
 HERMENEIA_WATCHDOG_CHECK_MS=60000     # 1 min poll
+HERMENEIA_RESPAWN_CAP=5               # give up after N consecutive failed respawns
 ```
+
+### Session reliability
+
+- **Per-account bridge logs** are written to `<dataDir>/logs/bridge-<accountId>.log` (captures the Go/whatsmeow stderr, invaluable for diagnosing silent session drops).
+- When WhatsApp revokes a linked device, Hermeneia catches the `logged_out` event, clears the saved phone, kills the bridge so whatsmeow re-initialises and emits a fresh QR, and fires a **macOS desktop notification** pointing at the setup URL.
+- If a bridge fails to stay connected after `HERMENEIA_RESPAWN_CAP` consecutive respawn attempts, Hermeneia stops retrying and notifies you — respawning a genuinely revoked session is futile.
 
 ## Development
 

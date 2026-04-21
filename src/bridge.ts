@@ -5,7 +5,7 @@
 // newline-delimited JSON over stdin/stdout.
 
 import { spawn, type ChildProcess } from "child_process";
-import { createReadStream } from "fs";
+import { createReadStream, createWriteStream, mkdirSync, type WriteStream } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { EventEmitter } from "events";
@@ -28,6 +28,8 @@ function getBinaryName(): string {
 export class WhatsAppBridge extends EventEmitter {
   private proc: ChildProcess | null = null;
   private dataDir: string;
+  private logDir: string | null;
+  private logStream: WriteStream | null = null;
   private _accountId: string;
   private _connected = false;
   private _authenticated = false;
@@ -41,9 +43,10 @@ export class WhatsAppBridge extends EventEmitter {
   >();
   private reqCounter = 0;
 
-  constructor(dataDir: string, accountId = "default") {
+  constructor(dataDir: string, accountId = "default", logDir: string | null = null) {
     super();
     this.dataDir = dataDir;
+    this.logDir = logDir;
     this._accountId = accountId;
   }
 
@@ -143,6 +146,24 @@ export class WhatsAppBridge extends EventEmitter {
     log(`Starting Go bridge: ${binaryPath}`);
     log(`Data directory: ${this.dataDir}`);
 
+    // Open per-account stderr log file if a log directory was provided.
+    // Captures whatsmeow's full logging — critical for diagnosing
+    // session lifecycle issues (logouts, reconnects, protocol errors).
+    if (this.logDir) {
+      try {
+        mkdirSync(this.logDir, { recursive: true });
+        const logPath = join(this.logDir, `bridge-${this._accountId}.log`);
+        this.logStream = createWriteStream(logPath, { flags: "a" });
+        this.logStream.write(
+          `\n=== ${new Date().toISOString()} — bridge start (${this._accountId}) ===\n`
+        );
+        log(`Bridge stderr → ${logPath}`);
+      } catch (err: any) {
+        log(`Could not open bridge log: ${err?.message ?? err}`);
+        this.logStream = null;
+      }
+    }
+
     this.proc = spawn(binaryPath, [this.dataDir], {
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -158,10 +179,11 @@ export class WhatsAppBridge extends EventEmitter {
       }
     });
 
-    // Forward stderr (Go bridge logs) to our stderr
+    // Forward stderr (Go bridge logs) to our stderr + persist to log file
     this.proc.stderr?.on("data", (data: Buffer) => {
-      const text = data.toString().trim();
-      if (text) console.error(text);
+      const text = data.toString();
+      if (text.trim()) console.error(text.trimEnd());
+      this.logStream?.write(text);
     });
 
     this.proc.on("exit", (code, signal) => {
@@ -169,6 +191,13 @@ export class WhatsAppBridge extends EventEmitter {
       this._connected = false;
       this._authenticated = false;
       this.proc = null;
+      try {
+        this.logStream?.write(
+          `=== ${new Date().toISOString()} — bridge exit code=${code} signal=${signal ?? ""} ===\n`
+        );
+        this.logStream?.end();
+      } catch {}
+      this.logStream = null;
       if (code !== 0 && code !== null) {
         this.emit("error", new Error(`Bridge process exited with code ${code}`));
       }

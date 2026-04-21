@@ -28116,15 +28116,16 @@ var StdioServerTransport = class {
 // src/index.ts
 import { join as join5, dirname as dirname3 } from "path";
 import { homedir } from "os";
-import { existsSync as existsSync4, cpSync as cpSync2, mkdirSync as mkdirSync3 } from "fs";
+import { existsSync as existsSync4, cpSync as cpSync2, mkdirSync as mkdirSync4 } from "fs";
 import { fileURLToPath as fileURLToPath4 } from "url";
 
 // src/bridge-manager.ts
-import { mkdirSync as mkdirSync2, existsSync as existsSync3, readFileSync as readFileSync3, writeFileSync as writeFileSync2, renameSync, cpSync } from "fs";
+import { mkdirSync as mkdirSync3, existsSync as existsSync3, readFileSync as readFileSync3, writeFileSync as writeFileSync2, renameSync, cpSync } from "fs";
 import { join as join4 } from "path";
 
 // src/bridge.ts
 import { spawn } from "child_process";
+import { createWriteStream, mkdirSync as mkdirSync2 } from "fs";
 import { join as join2, dirname as dirname2 } from "path";
 import { fileURLToPath as fileURLToPath2 } from "url";
 import { EventEmitter } from "events";
@@ -29081,6 +29082,8 @@ function getBinaryName() {
 var WhatsAppBridge = class extends EventEmitter {
   proc = null;
   dataDir;
+  logDir;
+  logStream = null;
   _accountId;
   _connected = false;
   _authenticated = false;
@@ -29090,9 +29093,10 @@ var WhatsAppBridge = class extends EventEmitter {
   _lastEventTime = Date.now();
   pendingRequests = /* @__PURE__ */ new Map();
   reqCounter = 0;
-  constructor(dataDir2, accountId = "default") {
+  constructor(dataDir2, accountId = "default", logDir = null) {
     super();
     this.dataDir = dataDir2;
+    this.logDir = logDir;
     this._accountId = accountId;
   }
   get accountId() {
@@ -29175,6 +29179,22 @@ var WhatsAppBridge = class extends EventEmitter {
     }
     log2(`Starting Go bridge: ${binaryPath}`);
     log2(`Data directory: ${this.dataDir}`);
+    if (this.logDir) {
+      try {
+        mkdirSync2(this.logDir, { recursive: true });
+        const logPath = join2(this.logDir, `bridge-${this._accountId}.log`);
+        this.logStream = createWriteStream(logPath, { flags: "a" });
+        this.logStream.write(
+          `
+=== ${(/* @__PURE__ */ new Date()).toISOString()} \u2014 bridge start (${this._accountId}) ===
+`
+        );
+        log2(`Bridge stderr \u2192 ${logPath}`);
+      } catch (err) {
+        log2(`Could not open bridge log: ${err?.message ?? err}`);
+        this.logStream = null;
+      }
+    }
     this.proc = spawn(binaryPath, [this.dataDir], {
       stdio: ["pipe", "pipe", "pipe"]
     });
@@ -29188,14 +29208,24 @@ var WhatsAppBridge = class extends EventEmitter {
       }
     });
     this.proc.stderr?.on("data", (data) => {
-      const text2 = data.toString().trim();
-      if (text2) console.error(text2);
+      const text2 = data.toString();
+      if (text2.trim()) console.error(text2.trimEnd());
+      this.logStream?.write(text2);
     });
     this.proc.on("exit", (code, signal) => {
       log2(`Go bridge exited with code ${code}${signal ? ` (signal ${signal})` : ""}`);
       this._connected = false;
       this._authenticated = false;
       this.proc = null;
+      try {
+        this.logStream?.write(
+          `=== ${(/* @__PURE__ */ new Date()).toISOString()} \u2014 bridge exit code=${code} signal=${signal ?? ""} ===
+`
+        );
+        this.logStream?.end();
+      } catch {
+      }
+      this.logStream = null;
       if (code !== 0 && code !== null) {
         this.emit("error", new Error(`Bridge process exited with code ${code}`));
       }
@@ -29704,6 +29734,24 @@ async function openBrowser(url2) {
   }
 }
 
+// src/notify.ts
+import { spawn as spawn2 } from "child_process";
+function notify(title, body) {
+  if (process.platform !== "darwin") return;
+  const esc2 = (s) => s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  try {
+    const proc = spawn2(
+      "osascript",
+      ["-e", `display notification "${esc2(body)}" with title "${esc2(title)}"`],
+      { stdio: "ignore", detached: true }
+    );
+    proc.on("error", () => {
+    });
+    proc.unref();
+  } catch {
+  }
+}
+
 // src/bridge-manager.ts
 var log4 = (msg) => console.error(`[hermeneia:manager] ${msg}`);
 var BridgeManager = class {
@@ -29715,6 +29763,11 @@ var BridgeManager = class {
   shuttingDown = false;
   // Tracks exponential-backoff delay per account id for respawn attempts.
   respawnBackoff = /* @__PURE__ */ new Map();
+  // Consecutive failed respawns without a successful "connected" event in between.
+  // Once this exceeds the cap, we stop respawning and notify the user — the
+  // session is genuinely dead (revoked/logged-out) and retrying is futile.
+  consecutiveFailures = /* @__PURE__ */ new Map();
+  respawnCap;
   // Watchdog timeout: if a connected bridge has received no events for this long, kill + respawn.
   watchdogTimeoutMs;
   watchdogCheckMs;
@@ -29723,6 +29776,10 @@ var BridgeManager = class {
     this.qrPort = qrPort2;
     this.watchdogTimeoutMs = parseInt(process.env.HERMENEIA_WATCHDOG_TIMEOUT_MS ?? "300000", 10);
     this.watchdogCheckMs = parseInt(process.env.HERMENEIA_WATCHDOG_CHECK_MS ?? "60000", 10);
+    this.respawnCap = parseInt(process.env.HERMENEIA_RESPAWN_CAP ?? "5", 10);
+  }
+  logDirPath() {
+    return join4(this.dataDir, "logs");
   }
   setMessageHandler(handler) {
     this.onMessage = handler;
@@ -29735,7 +29792,7 @@ var BridgeManager = class {
     if (!existsSync3(oldWhatsmeow)) return;
     if (existsSync3(join4(defaultDir, "whatsmeow.db"))) return;
     log4("Migrating old single-account layout to accounts/default/...");
-    mkdirSync2(defaultDir, { recursive: true });
+    mkdirSync3(defaultDir, { recursive: true });
     renameSync(oldWhatsmeow, join4(defaultDir, "whatsmeow.db"));
     const oldAuth = join4(this.dataDir, "auth");
     if (existsSync3(oldAuth)) {
@@ -29790,7 +29847,7 @@ var BridgeManager = class {
       throw new Error(`Account "${id}" already exists`);
     }
     const accountDir = join4(this.dataDir, "accounts", id);
-    mkdirSync2(accountDir, { recursive: true });
+    mkdirSync3(accountDir, { recursive: true });
     await this.startBridge(id, null, null);
     const accounts = this.loadAccounts();
     if (!accounts.find((a) => a.id === id)) {
@@ -29813,8 +29870,8 @@ var BridgeManager = class {
   }
   async startBridge(id, name, phone) {
     const accountDir = join4(this.dataDir, "accounts", id);
-    mkdirSync2(accountDir, { recursive: true });
-    const bridge = new WhatsAppBridge(accountDir, id);
+    mkdirSync3(accountDir, { recursive: true });
+    const bridge = new WhatsAppBridge(accountDir, id, this.logDirPath());
     bridge.setQrPort(this.qrPort);
     bridge.displayName = name;
     bridge.phone = phone;
@@ -29824,6 +29881,17 @@ var BridgeManager = class {
     bridge.on("connected", () => {
       log4(`Account "${id}" connected`);
       this.updateAccountInfo(id, bridge.displayName, bridge.phone);
+      this.consecutiveFailures.delete(id);
+      this.respawnBackoff.delete(id);
+    });
+    bridge.on("logged_out", () => {
+      log4(`Account "${id}" was logged out by WhatsApp \u2014 re-scan required`);
+      this.clearAuthState(id);
+      notify(
+        "WhatsApp session expired",
+        `Account "${id}" was logged out. Open http://localhost:${this.qrPort}/setup/${id} to re-scan.`
+      );
+      bridge.forceKill("SIGTERM");
     });
     bridge.on("account_info", () => {
       this.updateAccountInfo(id, bridge.displayName, bridge.phone);
@@ -29842,7 +29910,6 @@ var BridgeManager = class {
     try {
       await bridge.start();
       log4(`Started bridge for account: ${id}`);
-      this.respawnBackoff.delete(id);
     } catch (err) {
       log4(`Failed to start bridge for account "${id}": ${err.message}`);
       this.bridges.delete(id);
@@ -29851,10 +29918,25 @@ var BridgeManager = class {
   }
   scheduleRespawn(id, name, phone) {
     if (this.shuttingDown) return;
+    const failures = (this.consecutiveFailures.get(id) ?? 0) + 1;
+    this.consecutiveFailures.set(id, failures);
+    if (failures > this.respawnCap) {
+      log4(
+        `Giving up on "${id}" after ${failures - 1} consecutive respawn failures. Check logs (data/logs/bridge-${id}.log), then restart Hermeneia to retry.`
+      );
+      notify(
+        "Hermeneia: WhatsApp bridge failed",
+        `Account "${id}" won't stay connected (${failures - 1} retries). Likely needs a re-scan \u2014 see check_status.`
+      );
+      this.bridges.delete(id);
+      return;
+    }
     const prev = this.respawnBackoff.get(id) ?? 0;
     const delay = prev === 0 ? 5e3 : Math.min(prev * 2, 3e4);
     this.respawnBackoff.set(id, delay);
-    log4(`Scheduling respawn of "${id}" in ${Math.round(delay / 1e3)}s`);
+    log4(
+      `Scheduling respawn of "${id}" in ${Math.round(delay / 1e3)}s (attempt ${failures}/${this.respawnCap})`
+    );
     setTimeout(() => {
       if (this.shuttingDown) return;
       const saved = this.loadAccounts().find((a) => a.id === id);
@@ -29872,6 +29954,15 @@ var BridgeManager = class {
     if (entry) {
       if (name) entry.name = name;
       if (phone) entry.phone = phone;
+      this.saveAccounts(accounts);
+    }
+  }
+  /** Clear saved phone/name for an account so the QR page auto-opens on next QR. */
+  clearAuthState(id) {
+    const accounts = this.loadAccounts();
+    const entry = accounts.find((a) => a.id === id);
+    if (entry) {
+      entry.phone = null;
       this.saveAccounts(accounts);
     }
   }
@@ -30654,7 +30745,7 @@ function migrateOldDataDir() {
   if (!existsSync4(oldDir)) return;
   if (existsSync4(join5(dataDir, "accounts.json"))) return;
   log5(`Migrating data from ${oldDir} to ${dataDir}`);
-  mkdirSync3(dataDir, { recursive: true });
+  mkdirSync4(dataDir, { recursive: true });
   cpSync2(oldDir, dataDir, { recursive: true });
   log5("Data migration complete");
 }
@@ -30677,7 +30768,7 @@ async function main() {
   const mcpServer = new Server(
     {
       name: "hermeneia",
-      version: "0.4.3"
+      version: "0.4.4"
     },
     {
       capabilities: {

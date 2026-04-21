@@ -8,6 +8,7 @@ import { join } from "path";
 import { WhatsAppBridge } from "./bridge.js";
 import { startQRServer, stopQRServer } from "./qr-server.js";
 import { isMirrorEnabled, mirrorHeartbeat, flushAll as flushMirror } from "./mirror.js";
+import { notify } from "./notify.js";
 import type { AccountInfo } from "./types.js";
 
 const log = (msg: string) => console.error(`[hermeneia:manager] ${msg}`);
@@ -27,6 +28,11 @@ export class BridgeManager {
   private shuttingDown = false;
   // Tracks exponential-backoff delay per account id for respawn attempts.
   private respawnBackoff = new Map<string, number>();
+  // Consecutive failed respawns without a successful "connected" event in between.
+  // Once this exceeds the cap, we stop respawning and notify the user — the
+  // session is genuinely dead (revoked/logged-out) and retrying is futile.
+  private consecutiveFailures = new Map<string, number>();
+  private readonly respawnCap: number;
   // Watchdog timeout: if a connected bridge has received no events for this long, kill + respawn.
   private readonly watchdogTimeoutMs: number;
   private readonly watchdogCheckMs: number;
@@ -36,6 +42,11 @@ export class BridgeManager {
     this.qrPort = qrPort;
     this.watchdogTimeoutMs = parseInt(process.env.HERMENEIA_WATCHDOG_TIMEOUT_MS ?? "300000", 10);
     this.watchdogCheckMs = parseInt(process.env.HERMENEIA_WATCHDOG_CHECK_MS ?? "60000", 10);
+    this.respawnCap = parseInt(process.env.HERMENEIA_RESPAWN_CAP ?? "5", 10);
+  }
+
+  private logDirPath(): string {
+    return join(this.dataDir, "logs");
   }
 
   setMessageHandler(handler: (accountId: string, msg: any) => void): void {
@@ -165,7 +176,7 @@ export class BridgeManager {
     const accountDir = join(this.dataDir, "accounts", id);
     mkdirSync(accountDir, { recursive: true });
 
-    const bridge = new WhatsAppBridge(accountDir, id);
+    const bridge = new WhatsAppBridge(accountDir, id, this.logDirPath());
     bridge.setQrPort(this.qrPort);
     bridge.displayName = name;
     bridge.phone = phone;
@@ -178,6 +189,21 @@ export class BridgeManager {
       log(`Account "${id}" connected`);
       // Update saved account info
       this.updateAccountInfo(id, bridge.displayName, bridge.phone);
+      // Reset respawn counters on successful connect
+      this.consecutiveFailures.delete(id);
+      this.respawnBackoff.delete(id);
+    });
+
+    bridge.on("logged_out", () => {
+      log(`Account "${id}" was logged out by WhatsApp — re-scan required`);
+      // Clear the saved phone so the QR server auto-opens the browser on next QR.
+      this.clearAuthState(id);
+      notify(
+        "WhatsApp session expired",
+        `Account "${id}" was logged out. Open http://localhost:${this.qrPort}/setup/${id} to re-scan.`
+      );
+      // Force-kill so the Go bridge restarts and emits a fresh QR.
+      bridge.forceKill("SIGTERM");
     });
 
     bridge.on("account_info", () => {
@@ -204,8 +230,8 @@ export class BridgeManager {
     try {
       await bridge.start();
       log(`Started bridge for account: ${id}`);
-      // Reset respawn backoff on successful start
-      this.respawnBackoff.delete(id);
+      // Backoff + failure counters reset only on successful "connected" event.
+      // A spawn success with no subsequent connect still counts as a failed attempt.
     } catch (err: any) {
       log(`Failed to start bridge for account "${id}": ${err.message}`);
       this.bridges.delete(id);
@@ -216,11 +242,29 @@ export class BridgeManager {
   private scheduleRespawn(id: string, name: string | null, phone: string | null): void {
     if (this.shuttingDown) return;
 
+    const failures = (this.consecutiveFailures.get(id) ?? 0) + 1;
+    this.consecutiveFailures.set(id, failures);
+
+    if (failures > this.respawnCap) {
+      log(
+        `Giving up on "${id}" after ${failures - 1} consecutive respawn failures. ` +
+          `Check logs (data/logs/bridge-${id}.log), then restart Hermeneia to retry.`
+      );
+      notify(
+        "Hermeneia: WhatsApp bridge failed",
+        `Account "${id}" won't stay connected (${failures - 1} retries). Likely needs a re-scan — see check_status.`
+      );
+      this.bridges.delete(id);
+      return;
+    }
+
     const prev = this.respawnBackoff.get(id) ?? 0;
     const delay = prev === 0 ? 5_000 : Math.min(prev * 2, 30_000);
     this.respawnBackoff.set(id, delay);
 
-    log(`Scheduling respawn of "${id}" in ${Math.round(delay / 1000)}s`);
+    log(
+      `Scheduling respawn of "${id}" in ${Math.round(delay / 1000)}s (attempt ${failures}/${this.respawnCap})`
+    );
 
     setTimeout(() => {
       if (this.shuttingDown) return;
@@ -242,6 +286,16 @@ export class BridgeManager {
     if (entry) {
       if (name) entry.name = name;
       if (phone) entry.phone = phone;
+      this.saveAccounts(accounts);
+    }
+  }
+
+  /** Clear saved phone/name for an account so the QR page auto-opens on next QR. */
+  private clearAuthState(id: string): void {
+    const accounts = this.loadAccounts();
+    const entry = accounts.find((a) => a.id === id);
+    if (entry) {
+      entry.phone = null;
       this.saveAccounts(accounts);
     }
   }

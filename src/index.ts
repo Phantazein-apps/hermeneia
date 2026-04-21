@@ -88,7 +88,7 @@ async function main() {
   const mcpServer = new Server(
     {
       name: "hermeneia",
-      version: "0.4.3",
+      version: "0.4.4",
     },
     {
       capabilities: {
