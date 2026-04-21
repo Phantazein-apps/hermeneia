@@ -169,23 +169,27 @@ Either `URL` or `TOKEN` unset → mirror is a complete no-op.
 
 ### Where to find your token
 
-The token is a shared password between Epistole (the server) and Hermeneia (this client). You *chose this value yourself* when you first deployed Epistole — it's the `WA_BRIDGE_TOKEN` Cloudflare Worker secret.
+The token is a shared password between Epistole (the server) and Hermeneia (this client) — the `WA_BRIDGE_TOKEN` Cloudflare Worker secret on the Epistole side. How you got it depends on when and how you deployed Epistole:
 
-To retrieve it:
+**If you installed Epistole with the WhatsApp bridge enabled** — the installer asked *"Enable WhatsApp bridge endpoint? [y/N]"* and you answered **y**. It generated a random 64-character token, stored it as the Worker secret, and printed the token twice during install with a *"save this now"* callout. That's the token. Paste it into the Hermeneia field. If you didn't save it, jump to *Rotating* below.
 
-1. Open [dash.cloudflare.com](https://dash.cloudflare.com) → **Workers & Pages**
-2. Click your Epistole worker (whatever you named it)
-3. **Settings** → **Variables and Secrets**
-4. Look for a secret named `WA_BRIDGE_TOKEN`
+**If you deployed Epistole before the WhatsApp bridge shipped, or said "n" at the prompt** — the secret doesn't exist yet. Create it now from inside the Epistole repo:
 
-**Cloudflare does not show existing secret values** — that's by design, same as any password manager. If you don't have the value saved somewhere:
+```bash
+# Generate a random value you can paste into both sides
+openssl rand -hex 32
+# Then set it as the Cloudflare secret (you'll be prompted for the value)
+wrangler secret put WA_BRIDGE_TOKEN
+wrangler deploy
+```
 
-- Check your password manager (1Password, Bitwarden, Apple Keychain…)
-- Check your shell history: `history | grep WA_BRIDGE_TOKEN`
-- Check Epistole's local dev file: `.dev.vars` or `.env` in the Epistole repo (if you ran it locally)
-- **Or just rotate it.** From Epistole's repo: `wrangler secret put WA_BRIDGE_TOKEN`, enter any new random value, then paste the same value into Hermeneia's config field. Both sides need to match but the value itself is arbitrary — 32+ random characters is typical. Rotating doesn't break anything as long as you update both sides.
+Paste the same value into Hermeneia's **Epistole mirror token** field.
 
-Keep the token private. Anyone with it can write mirror data to your Epistole instance (they can't read data back — the write endpoint is one-way — but they could fill your Epistole with junk).
+**Rotating (you lost the value or want to refresh it)** — re-run the same two commands with a fresh value, then update Hermeneia's field to match. Nothing breaks; the old token is simply invalidated.
+
+**Cloudflare never shows existing secret values.** That's by design. If the value isn't in your password manager / shell history / `.dev.vars`, rotation is the right answer — it's 30 seconds of work.
+
+Keep the token private. Anyone with it can write mirror data to your Epistole instance (they can't read data back — the push endpoint is one-way — but they could pollute your search index).
 
 ### Initial backfill
 
