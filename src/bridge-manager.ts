@@ -7,6 +7,7 @@ import { mkdirSync, existsSync, readFileSync, writeFileSync, renameSync, cpSync 
 import { join } from "path";
 import { WhatsAppBridge } from "./bridge.js";
 import { startQRServer, stopQRServer } from "./qr-server.js";
+import { isMirrorEnabled, mirrorHeartbeat, flushAll as flushMirror } from "./mirror.js";
 import type { AccountInfo } from "./types.js";
 
 const log = (msg: string) => console.error(`[hermeneia:manager] ${msg}`);
@@ -22,10 +23,19 @@ export class BridgeManager {
   private dataDir: string;
   private qrPort: number;
   private onMessage?: (accountId: string, msg: any) => void;
+  private watchdogTimer: NodeJS.Timeout | null = null;
+  private shuttingDown = false;
+  // Tracks exponential-backoff delay per account id for respawn attempts.
+  private respawnBackoff = new Map<string, number>();
+  // Watchdog timeout: if a connected bridge has received no events for this long, kill + respawn.
+  private readonly watchdogTimeoutMs: number;
+  private readonly watchdogCheckMs: number;
 
   constructor(dataDir: string, qrPort: number) {
     this.dataDir = dataDir;
     this.qrPort = qrPort;
+    this.watchdogTimeoutMs = parseInt(process.env.HERMENEIA_WATCHDOG_TIMEOUT_MS ?? "300000", 10);
+    this.watchdogCheckMs = parseInt(process.env.HERMENEIA_WATCHDOG_CHECK_MS ?? "60000", 10);
   }
 
   setMessageHandler(handler: (accountId: string, msg: any) => void): void {
@@ -73,6 +83,43 @@ export class BridgeManager {
 
     for (const account of accounts) {
       await this.startBridge(account.id, account.name, account.phone);
+    }
+
+    this.startWatchdog();
+  }
+
+  private startWatchdog(): void {
+    if (this.watchdogTimer) return;
+    this.watchdogTimer = setInterval(() => this.watchdogTick(), this.watchdogCheckMs);
+    // Don't keep the process alive just for the watchdog.
+    this.watchdogTimer.unref?.();
+    log(
+      `Watchdog started — check every ${Math.round(this.watchdogCheckMs / 1000)}s, ` +
+        `timeout ${Math.round(this.watchdogTimeoutMs / 1000)}s`
+    );
+  }
+
+  private watchdogTick(): void {
+    if (this.shuttingDown) return;
+    const now = Date.now();
+
+    for (const [id, bridge] of this.bridges) {
+      if (!bridge.isConnected) continue;
+      const idle = now - bridge.lastEventTime;
+
+      // Heartbeat to Epistole for every connected, non-stale bridge
+      if (isMirrorEnabled()) {
+        mirrorHeartbeat(id, bridge.displayName, bridge.phone).catch(() => {});
+      }
+
+      if (idle > this.watchdogTimeoutMs) {
+        log(
+          `Watchdog: no events from "${id}" for ${Math.round(idle / 1000)}s — ` +
+            `killing PID ${bridge.pid ?? "?"} and respawning`
+        );
+        bridge.forceKill("SIGKILL");
+        // The bridge's "exit" handler (wired in startBridge) handles respawn.
+      }
     }
   }
 
@@ -145,15 +192,48 @@ export class BridgeManager {
       log(`Bridge error (${id}): ${err.message}`);
     });
 
+    bridge.on("exit", () => {
+      if (this.shuttingDown) return;
+      // The bridge entry is still in this.bridges (we haven't cleared it).
+      // Schedule a respawn with backoff.
+      this.scheduleRespawn(id, name, phone);
+    });
+
     this.bridges.set(id, bridge);
 
     try {
       await bridge.start();
       log(`Started bridge for account: ${id}`);
+      // Reset respawn backoff on successful start
+      this.respawnBackoff.delete(id);
     } catch (err: any) {
       log(`Failed to start bridge for account "${id}": ${err.message}`);
       this.bridges.delete(id);
+      if (!this.shuttingDown) this.scheduleRespawn(id, name, phone);
     }
+  }
+
+  private scheduleRespawn(id: string, name: string | null, phone: string | null): void {
+    if (this.shuttingDown) return;
+
+    const prev = this.respawnBackoff.get(id) ?? 0;
+    const delay = prev === 0 ? 5_000 : Math.min(prev * 2, 30_000);
+    this.respawnBackoff.set(id, delay);
+
+    log(`Scheduling respawn of "${id}" in ${Math.round(delay / 1000)}s`);
+
+    setTimeout(() => {
+      if (this.shuttingDown) return;
+      // Use the latest known name/phone from accounts.json if available.
+      const saved = this.loadAccounts().find((a) => a.id === id);
+      const n = saved?.name ?? name;
+      const p = saved?.phone ?? phone;
+      // Drop the stale bridge entry before restarting.
+      this.bridges.delete(id);
+      this.startBridge(id, n, p).catch((err) => {
+        log(`Respawn of "${id}" failed: ${err?.message ?? err}`);
+      });
+    }, delay).unref?.();
   }
 
   private updateAccountInfo(id: string, name: string | null, phone: string | null): void {
@@ -223,12 +303,20 @@ export class BridgeManager {
 
   /** Stop all bridges */
   async stopAll(): Promise<void> {
+    this.shuttingDown = true;
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
     for (const [id, bridge] of this.bridges) {
       log(`Stopping bridge: ${id}`);
       await bridge.stop();
     }
     this.bridges.clear();
     stopQRServer();
+    try {
+      await flushMirror();
+    } catch {}
   }
 
   // ── Persistence ──────────────────────────────────────────────────

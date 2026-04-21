@@ -20,6 +20,7 @@ import { BridgeManager } from "./bridge-manager.js";
 import { initStore } from "./store.js";
 import { registerTools } from "./tools.js";
 import { stopQRServer } from "./qr-server.js";
+import { initMirror } from "./mirror.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const log = (msg: string) => console.error(`[hermeneia] ${msg}`);
@@ -68,6 +69,10 @@ async function main() {
   await initStore(dataDir);
   log("Message store ready");
 
+  // 1b. Initialize optional Epistole mirror (no-op unless env vars are set)
+  const mirrorInfo = initMirror();
+  log(`Epistole mirror: ${mirrorInfo.info}`);
+
   // 2. Start bridge manager (handles multiple WhatsApp accounts)
   const manager = new BridgeManager(dataDir, qrPort);
 
@@ -83,7 +88,7 @@ async function main() {
   const mcpServer = new Server(
     {
       name: "hermeneia",
-      version: "0.4.2",
+      version: "0.4.3",
     },
     {
       capabilities: {

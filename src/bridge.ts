@@ -11,6 +11,7 @@ import { fileURLToPath } from "url";
 import { EventEmitter } from "events";
 import { createInterface } from "readline";
 import { upsertChat, storeMessage, upsertContact, incrementUnread } from "./store.js";
+import { mirrorMessage, mirrorChat, mirrorContact } from "./mirror.js";
 import type { BridgeStatus } from "./types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -33,6 +34,7 @@ export class WhatsAppBridge extends EventEmitter {
   private _currentQR: string | null = null;
   private _displayName: string | null = null;
   private _phone: string | null = null;
+  private _lastEventTime: number = Date.now();
   private pendingRequests = new Map<
     string,
     { resolve: (v: any) => void; reject: (e: Error) => void }
@@ -75,6 +77,22 @@ export class WhatsAppBridge extends EventEmitter {
 
   get isConnected(): boolean {
     return this._connected && this._authenticated;
+  }
+
+  get lastEventTime(): number {
+    return this._lastEventTime;
+  }
+
+  get pid(): number | null {
+    return this.proc?.pid ?? null;
+  }
+
+  /** Force-kill the Go subprocess (watchdog use). */
+  forceKill(signal: NodeJS.Signals = "SIGKILL"): void {
+    if (this.proc && !this.proc.killed) {
+      try { this.proc.kill(signal); } catch {}
+    }
+    this._connected = false;
   }
 
   // Kept for API compatibility (qr-server uses it)
@@ -146,12 +164,16 @@ export class WhatsAppBridge extends EventEmitter {
       if (text) console.error(text);
     });
 
-    this.proc.on("exit", (code) => {
-      log(`Go bridge exited with code ${code}`);
+    this.proc.on("exit", (code, signal) => {
+      log(`Go bridge exited with code ${code}${signal ? ` (signal ${signal})` : ""}`);
       this._connected = false;
+      this._authenticated = false;
+      this.proc = null;
       if (code !== 0 && code !== null) {
         this.emit("error", new Error(`Bridge process exited with code ${code}`));
       }
+      // Always signal exit so manager can decide whether to respawn.
+      this.emit("exit", { code, signal });
     });
 
     this.proc.on("error", (err) => {
@@ -160,6 +182,7 @@ export class WhatsAppBridge extends EventEmitter {
   }
 
   private handleEvent(evt: any): void {
+    this._lastEventTime = Date.now();
     switch (evt.type) {
       case "qr":
         this._currentQR = evt.data;
@@ -228,6 +251,21 @@ export class WhatsAppBridge extends EventEmitter {
             null,
             mediaInfo
           );
+
+          // Best-effort mirror after durable write
+          try {
+            mirrorMessage(this._accountId, {
+              id: messageId,
+              chat_jid: chatJid,
+              sender,
+              content,
+              timestamp,
+              is_from_me: isFromMe,
+              media_type: mediaType,
+              media_info: evt.media_info ?? null,
+              filename: evt.media_info?.Filename ?? evt.media_info?.filename ?? null,
+            });
+          } catch {}
         }
 
         this.emit("message", {
@@ -250,6 +288,17 @@ export class WhatsAppBridge extends EventEmitter {
           parentGroupJid: evt.parent_group_jid || undefined,
           isParentGroup: evt.is_parent_group ?? undefined,
         });
+        try {
+          mirrorChat(this._accountId, {
+            jid: evt.jid,
+            name: evt.name || null,
+            last_message_time: evt.last_message_time,
+            unread_count: evt.unread_count ?? undefined,
+            archived: evt.archived ?? undefined,
+            parent_group_jid: evt.parent_group_jid || null,
+            is_parent_group: evt.is_parent_group ?? undefined,
+          });
+        } catch {}
         break;
 
       case "contact":
@@ -261,6 +310,16 @@ export class WhatsAppBridge extends EventEmitter {
           notify: evt.notify || null,
           verifiedName: evt.verified_name ?? null,
         });
+        try {
+          mirrorContact(this._accountId, {
+            id: evt.id,
+            lid: evt.lid || null,
+            phone_jid: evt.phone_jid || null,
+            name: evt.name || null,
+            notify: evt.notify || null,
+            verified_name: evt.verified_name ?? null,
+          });
+        } catch {}
         break;
 
       case "contacts_ready":

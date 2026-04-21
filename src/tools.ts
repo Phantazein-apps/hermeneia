@@ -24,6 +24,8 @@ import {
   getStoreDiagnostics,
   getMessageMediaInfo,
 } from "./store.js";
+import { isMirrorEnabled, pushBatch } from "./mirror.js";
+import { listMessagesRaw, listChatsRaw, listContactsRaw, countMessagesRaw } from "./store.js";
 
 // Optional account parameter added to all tool schemas
 const accountProp = {
@@ -339,6 +341,87 @@ export function registerTools(server: Server, manager: BridgeManager): void {
           });
         }
 
+        case "epistole_backfill": {
+          if (!isMirrorEnabled()) {
+            return text(
+              "Epistole mirror is not configured. Set EPISTOLE_MIRROR_URL and EPISTOLE_MIRROR_TOKEN."
+            );
+          }
+          const id = (args?.account_id as string) ?? accountId;
+          if (!id) return text("Missing required argument: account_id");
+
+          const info = manager.getAllAccountInfo().find((a) => a.id === id);
+          if (!info) return text(`Account "${id}" not found`);
+
+          const batchSize = Math.min(Math.max((args?.batch_size as number) ?? 100, 1), 500);
+          const maxBatches = (args?.max_batches as number) ?? 0; // 0 = unlimited
+
+          let offset = 0;
+          let batches = 0;
+          let messagesWritten = 0;
+          let embedded = 0;
+          const total = countMessagesRaw(id);
+
+          // Push chats + contacts first (small, fast).
+          const chats = listChatsRaw(id);
+          const contacts = listContactsRaw(id);
+          let chatsWritten = 0;
+          let contactsWritten = 0;
+          try {
+            const r = await pushBatch(id, {
+              accountLabel: info.name,
+              phone: info.phone,
+              chats,
+              contacts,
+            });
+            chatsWritten = r.chats_written;
+            contactsWritten = r.contacts_written;
+          } catch (err: any) {
+            return text(`Backfill failed on chats/contacts: ${err?.message ?? err}`);
+          }
+
+          // Then messages, newest first.
+          while (true) {
+            const msgs = listMessagesRaw(id, batchSize, offset);
+            if (msgs.length === 0) break;
+            try {
+              const r = await pushBatch(id, {
+                accountLabel: info.name,
+                phone: info.phone,
+                messages: msgs,
+              });
+              messagesWritten += r.messages_written;
+              embedded += r.embedded;
+            } catch (err: any) {
+              return json({
+                partial: true,
+                error: `${err?.message ?? err}`,
+                account_id: id,
+                total_messages: total,
+                messages_written: messagesWritten,
+                chats_written: chatsWritten,
+                contacts_written: contactsWritten,
+                embedded,
+                batches_completed: batches,
+              });
+            }
+            offset += msgs.length;
+            batches++;
+            if (maxBatches > 0 && batches >= maxBatches) break;
+          }
+
+          return json({
+            ok: true,
+            account_id: id,
+            total_messages: total,
+            messages_written: messagesWritten,
+            chats_written: chatsWritten,
+            contacts_written: contactsWritten,
+            embedded,
+            batches,
+          });
+        }
+
         default:
           return text(`Unknown tool: ${name}`);
       }
@@ -639,6 +722,30 @@ export function registerTools(server: Server, manager: BridgeManager): void {
               ...accountProp,
             },
             required: ["recipient", "media_path"],
+          },
+          annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+        },
+        {
+          name: "epistole_backfill",
+          description:
+            "BETA: Push existing local WhatsApp history (chats, contacts, and messages newest-first) to the configured Epistole mirror for semantic indexing. No-op unless EPISTOLE_MIRROR_URL and EPISTOLE_MIRROR_TOKEN are set. Explicit one-shot action — not automatic.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              account_id: {
+                type: "string",
+                description: "Account ID to backfill (from list_accounts).",
+              },
+              batch_size: {
+                type: "number",
+                description: "Messages per POST (default 100, max 500).",
+              },
+              max_batches: {
+                type: "number",
+                description: "Optional cap on number of batches (0 or unset = unlimited).",
+              },
+            },
+            required: ["account_id"],
           },
           annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
         },

@@ -112,6 +112,53 @@ Origin chain: [`lharries/whatsapp-mcp`](https://github.com/lharries/whatsapp-mcp
 - No webhook forwarding for incoming messages (upstream `verygoodplugins` has this).
 - No semantic search over message history (IMAP-search-equivalent only).
 
+## Beta: Epistole mirror
+
+Hermeneia can optionally push a copy of incoming WhatsApp events to a remote [Epistole](https://github.com/Phantazein-apps/epistole) Cloudflare Worker so that its `semantic_search` indexes WhatsApp history alongside email. **Off by default.** Enabling the mirror does not change any existing behavior — sends, media, and the local `messages.db` all still live here.
+
+### What it does
+
+- After each durable local write (message, chat, contact), best-effort POSTs a copy to `POST /api/wa/push` on your Epistole instance.
+- Batches events (1.5s debounce, 50-event flush) and sends one-way over HTTPS with a Bearer token.
+- Sends a heartbeat every ~60s per connected account.
+- One-shot backfill via the `epistole_backfill` MCP tool — walks existing `messages.db` for an account and ships it in batches.
+
+### What it does NOT do
+
+- **No media bytes are uploaded.** Only metadata (media type, filename, caption).
+- **No remote sends.** Epistole cannot send WhatsApp messages through Hermeneia — the channel is push-only, Hermeneia → Epistole.
+- **No state dependency.** If Epistole is unreachable, the call is dropped after a short backoff; Hermeneia keeps running. Lossy by design.
+
+### Configuration
+
+Set these environment variables before launching Hermeneia:
+
+```bash
+EPISTOLE_MIRROR_URL=https://your-epistole-host
+EPISTOLE_MIRROR_TOKEN=<same secret WA_BRIDGE_TOKEN as on Epistole>
+# Optional — comma-separated account-id allowlist; default is all accounts
+EPISTOLE_MIRROR_ACCOUNTS=personal
+```
+
+If either `URL` or `TOKEN` is unset, the mirror is a complete no-op.
+
+### Initial backfill
+
+From Claude Desktop, once the mirror env vars are set:
+
+> "Run `epistole_backfill` on account `personal`."
+
+The tool pushes chats and contacts first, then messages newest-first in batches (default 100). You can cap runs with `max_batches` if you want to trickle a large history.
+
+### Watchdog (independent of the mirror)
+
+Hermeneia monitors each connected bridge for event activity. If no events arrive from a connected account for `HERMENEIA_WATCHDOG_TIMEOUT_MS` (default 5 min), the Go subprocess is SIGKILLed and respawned with exponential backoff (5s → 30s cap). This is always on; the mirror has nothing to do with it.
+
+```bash
+HERMENEIA_WATCHDOG_TIMEOUT_MS=300000  # 5 min
+HERMENEIA_WATCHDOG_CHECK_MS=60000     # 1 min poll
+```
+
 ## Development
 
 ```bash

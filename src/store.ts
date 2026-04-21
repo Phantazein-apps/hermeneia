@@ -268,6 +268,85 @@ export function upsertContact(accountId: string, opts: {
   }
 }
 
+/** Raw-row helpers used by the Epistole mirror backfill tool.
+ *  These return objects shaped exactly like the mirror payload —
+ *  not the MCP-facing DTOs, which strip fields like media_info.
+ */
+export function listMessagesRaw(accountId: string, limit: number, offset: number): any[] {
+  return queryAll(
+    `SELECT id, chat_jid, sender, content, timestamp, is_from_me, media_type, media_info, filename
+     FROM messages WHERE account_id = ?
+     ORDER BY timestamp DESC
+     LIMIT ? OFFSET ?`,
+    [accountId, limit, offset]
+  ).map((r) => ({
+    id: r.id,
+    chat_jid: r.chat_jid,
+    sender: r.sender,
+    content: r.content ?? "",
+    timestamp: r.timestamp,
+    is_from_me: !!r.is_from_me,
+    media_type: r.media_type ?? null,
+    media_info: r.media_info ? safeParse(r.media_info) : null,
+    filename: r.filename ?? null,
+  }));
+}
+
+export function listChatsRaw(accountId: string): any[] {
+  return queryAll(
+    `SELECT jid, name, last_message_time, unread_count, archived, parent_group_jid, is_parent_group
+     FROM chats WHERE account_id = ?`,
+    [accountId]
+  ).map((r) => ({
+    jid: r.jid,
+    name: r.name ?? null,
+    last_message_time: r.last_message_time,
+    unread_count: r.unread_count ?? 0,
+    archived: !!r.archived,
+    parent_group_jid: r.parent_group_jid ?? null,
+    is_parent_group: !!r.is_parent_group,
+  }));
+}
+
+export function listContactsRaw(accountId: string): any[] {
+  return queryAll(
+    `SELECT id, lid, phone_jid, name, notify, verified_name
+     FROM contacts WHERE account_id = ?`,
+    [accountId]
+  ).map((r) => ({
+    id: r.id,
+    lid: r.lid ?? null,
+    phone_jid: r.phone_jid ?? null,
+    name: r.name ?? null,
+    notify: r.notify ?? null,
+    verified_name: r.verified_name ?? null,
+  }));
+}
+
+export function countMessagesRaw(accountId: string): number {
+  const row = queryOne(`SELECT COUNT(*) AS n FROM messages WHERE account_id = ?`, [accountId]);
+  return (row?.n as number) ?? 0;
+}
+
+function safeParse(s: string): any {
+  try { return JSON.parse(s); } catch { return null; }
+}
+
+/** Batch lookup of chat display names for a set of JIDs in one account. */
+export function getChatNamesByJid(accountId: string, jids: string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  if (jids.length === 0) return out;
+  const placeholders = jids.map(() => "?").join(",");
+  const rows = queryAll(
+    `SELECT jid, name FROM chats WHERE account_id = ? AND jid IN (${placeholders}) AND name IS NOT NULL AND name != ''`,
+    [accountId, ...jids]
+  );
+  for (const r of rows) {
+    if (r.name) out.set(r.jid as string, r.name as string);
+  }
+  return out;
+}
+
 /** Get all chat JIDs for batch contact resolution */
 export function getAllChatJids(accountId?: string): string[] {
   if (accountId) {
@@ -293,6 +372,30 @@ export function getStoreDiagnostics(accountId?: string): any {
     contacts: { total: contactCount?.n, withName: contactWithName?.n },
     messages: { total: msgCount?.n },
   };
+}
+
+/** Expand a JID into all equivalent JIDs (phone-jid ↔ linked LID ↔ contact id)
+ *  so queries match messages regardless of which identifier WhatsApp used for
+ *  the chat. WhatsApp's LID rollout flipped many direct chats from phone-jid
+ *  to LID keying; contacts still have both columns, so the contacts table is
+ *  the authoritative cross-reference.
+ *  Groups (@g.us) have no LID — returned as-is. */
+export function resolveJidEquivalents(jid: string, accountId?: string): string[] {
+  const set = new Set<string>([jid]);
+  if (jid.endsWith("@g.us")) return [jid];
+
+  const acFilter = accountId ? " AND account_id = ?" : "";
+  const acParams = accountId ? [accountId] : [];
+  const rows = queryAll(
+    `SELECT id, lid, phone_jid FROM contacts WHERE (id = ? OR lid = ? OR phone_jid = ?)${acFilter}`,
+    [jid, jid, jid, ...acParams]
+  );
+  for (const r of rows) {
+    if (r.id) set.add(r.id as string);
+    if (r.lid) set.add(r.lid as string);
+    if (r.phone_jid) set.add(r.phone_jid as string);
+  }
+  return Array.from(set);
 }
 
 /** Resolve display name for any JID (LID, phone, or group) */
@@ -667,15 +770,48 @@ export function getDirectChatByContact(phone: string, accountId?: string): ChatD
   const acFilter = accountId ? " AND c.account_id = ?" : "";
   const acParams = accountId ? [accountId] : [];
 
-  const row = queryOne(
-    `SELECT c.jid, c.account_id, c.name, c.last_message_time,
-            m.content AS last_message, m.sender AS last_sender, m.is_from_me AS last_is_from_me
-     FROM chats c
-     LEFT JOIN messages m ON c.jid = m.chat_jid AND c.account_id = m.account_id AND c.last_message_time = m.timestamp
-     WHERE c.jid LIKE ? AND c.jid NOT LIKE '%@g.us'${acFilter}
-     LIMIT 1`,
-    [`%${phone}%`, ...acParams]
+  // Gather candidate chat JIDs: phone-number substring match in contacts table,
+  // expanded to include linked LIDs. Falls back to plain chat-jid LIKE if no
+  // contact row exists for this phone.
+  const contactAcFilter = accountId ? " AND account_id = ?" : "";
+  const contactRows = queryAll(
+    `SELECT id, lid, phone_jid FROM contacts
+     WHERE (id LIKE ? OR phone_jid LIKE ?)${contactAcFilter}`,
+    [`%${phone}%`, `%${phone}%`, ...(accountId ? [accountId] : [])]
   );
+  const candidates = new Set<string>();
+  for (const r of contactRows) {
+    if (r.id) candidates.add(r.id as string);
+    if (r.lid) candidates.add(r.lid as string);
+    if (r.phone_jid) candidates.add(r.phone_jid as string);
+  }
+
+  let row: any;
+  if (candidates.size > 0) {
+    const jids = Array.from(candidates);
+    const placeholders = jids.map(() => "?").join(",");
+    row = queryOne(
+      `SELECT c.jid, c.account_id, c.name, c.last_message_time,
+              m.content AS last_message, m.sender AS last_sender, m.is_from_me AS last_is_from_me
+       FROM chats c
+       LEFT JOIN messages m ON c.jid = m.chat_jid AND c.account_id = m.account_id AND c.last_message_time = m.timestamp
+       WHERE c.jid IN (${placeholders}) AND c.jid NOT LIKE '%@g.us'${acFilter}
+       ORDER BY c.last_message_time DESC
+       LIMIT 1`,
+      [...jids, ...acParams]
+    );
+  } else {
+    row = queryOne(
+      `SELECT c.jid, c.account_id, c.name, c.last_message_time,
+              m.content AS last_message, m.sender AS last_sender, m.is_from_me AS last_is_from_me
+       FROM chats c
+       LEFT JOIN messages m ON c.jid = m.chat_jid AND c.account_id = m.account_id AND c.last_message_time = m.timestamp
+       WHERE c.jid LIKE ? AND c.jid NOT LIKE '%@g.us'${acFilter}
+       ORDER BY c.last_message_time DESC
+       LIMIT 1`,
+      [`%${phone}%`, ...acParams]
+    );
+  }
   if (!row) return null;
 
   const dict: ChatDict = {
@@ -692,6 +828,8 @@ export function getDirectChatByContact(phone: string, accountId?: string): ChatD
 }
 
 export function getContactChats(jid: string, limit = 20, page = 0, accountId?: string): ChatDict[] {
+  const jids = resolveJidEquivalents(jid, accountId);
+  const placeholders = jids.map(() => "?").join(",");
   const acFilter = accountId ? " AND c.account_id = ?" : "";
   const acParams = accountId ? [accountId] : [];
 
@@ -700,10 +838,10 @@ export function getContactChats(jid: string, limit = 20, page = 0, accountId?: s
             m.content AS last_message, m.sender AS last_sender, m.is_from_me AS last_is_from_me
      FROM chats c
      JOIN messages m ON c.jid = m.chat_jid AND c.account_id = m.account_id
-     WHERE (m.sender = ? OR c.jid = ?)${acFilter}
+     WHERE (m.sender IN (${placeholders}) OR c.jid IN (${placeholders}))${acFilter}
      ORDER BY c.last_message_time DESC
      LIMIT ? OFFSET ?`,
-    [jid, jid, ...acParams, limit, page * limit]
+    [...jids, ...jids, ...acParams, limit, page * limit]
   ).map((r) => {
     const dict: ChatDict = {
       jid: r.jid,
@@ -720,6 +858,8 @@ export function getContactChats(jid: string, limit = 20, page = 0, accountId?: s
 }
 
 export function getLastInteraction(jid: string, accountId?: string): MessageDict | null {
+  const jids = resolveJidEquivalents(jid, accountId);
+  const placeholders = jids.map(() => "?").join(",");
   const acFilter = accountId ? " AND m.account_id = ?" : "";
   const acParams = accountId ? [accountId] : [];
 
@@ -727,9 +867,9 @@ export function getLastInteraction(jid: string, accountId?: string): MessageDict
     `SELECT m.id, m.chat_jid, m.account_id, m.sender, m.content, m.timestamp,
             m.is_from_me, m.media_type, m.filename, c.name AS chat_name
      FROM messages m JOIN chats c ON m.chat_jid = c.jid AND m.account_id = c.account_id
-     WHERE (m.sender = ? OR c.jid = ?)${acFilter}
+     WHERE (m.sender IN (${placeholders}) OR c.jid IN (${placeholders}))${acFilter}
      ORDER BY m.timestamp DESC LIMIT 1`,
-    [jid, jid, ...acParams]
+    [...jids, ...jids, ...acParams]
   );
   return row ? toMessageDict(row) : null;
 }
