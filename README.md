@@ -213,6 +213,20 @@ If you try to run `epistole_backfill` from any of those and see *"no tool called
 
 This split is intentional and is actually the point of the mirror: you **backfill and live-mirror from the Mac** (writer side), then **search the mirrored data from anywhere via Epistole's `semantic_search`** (reader side — works from mobile, web, Cowork, Code, everywhere).
 
+### WhatsApp sync is not exhaustive — and never will be
+
+If a search doesn't find a message you *know* exists in a WhatsApp chat on your phone, check `messages.db` first — odds are the message isn't in Hermeneia either, which means the mirror never had a chance to push it.
+
+WhatsApp's multi-device protocol deliberately delivers only a subset of history to linked devices. In practice:
+
+- Chats with recent two-way activity get deep history sync (often years' worth)
+- Chats that have been quiet for several months may get **zero messages** delivered — the server decides they aren't worth the bandwidth
+- There is no public or reverse-engineered API to request a specific chat's full history on demand. Every whatsmeow-based client has this limit.
+
+**To nudge specific chat history into Hermeneia**: open that chat in WhatsApp **on your phone** and leave it foregrounded for a minute or two. WhatsApp often pushes `HistorySyncNotification` for the "currently viewed" chat. Sending a message in the chat (then deleting it) is an even stronger signal. Failing that, scrolling back through the chat on the phone can trigger context delivery to linked devices.
+
+New messages arriving going forward are not affected — the live mirror catches them reliably. This limit only affects old history that WhatsApp never handed off.
+
 ### Watchdog (independent of the mirror)
 
 Hermeneia monitors each connected bridge for event activity. If no events arrive from a connected account for `HERMENEIA_WATCHDOG_TIMEOUT_MS` (default 5 min), the Go subprocess is SIGKILLed and respawned with exponential backoff (5s → 30s cap). This is always on; the mirror has nothing to do with it.
