@@ -3230,10 +3230,10 @@ var require_utils = __commonJS({
         return { host, isIPV6: false };
       }
     }
-    function findToken(str, token) {
+    function findToken(str, token2) {
       let ind = 0;
       for (let i = 0; i < str.length; i++) {
-        if (str[i] === token) ind++;
+        if (str[i] === token2) ind++;
       }
       return ind;
     }
@@ -4328,11 +4328,11 @@ var require_core = __commonJS({
     Ajv2.ValidationError = validation_error_1.default;
     Ajv2.MissingRefError = ref_error_1.default;
     exports.default = Ajv2;
-    function checkOptions(checkOpts, options, msg, log5 = "error") {
+    function checkOptions(checkOpts, options, msg, log7 = "error") {
       for (const key in checkOpts) {
         const opt = key;
         if (opt in options)
-          this.logger[log5](`${msg}: option ${key}. ${checkOpts[opt]}`);
+          this.logger[log7](`${msg}: option ${key}. ${checkOpts[opt]}`);
       }
     }
     function getSchEnv(keyRef) {
@@ -9729,7 +9729,7 @@ var require_galois_field = __commonJS({
         EXP_TABLE[i] = EXP_TABLE[i - 255];
       }
     })();
-    exports.log = function log5(n) {
+    exports.log = function log7(n) {
       if (n < 1) throw new Error("log(" + n + ")");
       return LOG_TABLE[n];
     };
@@ -19975,9 +19975,9 @@ var $ZodE164 = /* @__PURE__ */ $constructor("$ZodE164", (inst, def) => {
   def.pattern ?? (def.pattern = e164);
   $ZodStringFormat.init(inst, def);
 });
-function isValidJWT2(token, algorithm = null) {
+function isValidJWT2(token2, algorithm = null) {
   try {
-    const tokensParts = token.split(".");
+    const tokensParts = token2.split(".");
     if (tokensParts.length !== 3)
       return false;
     const [header] = tokensParts;
@@ -28114,17 +28114,18 @@ var StdioServerTransport = class {
 };
 
 // src/index.ts
-import { join as join5, dirname as dirname3 } from "path";
+import { join as join6, dirname as dirname3 } from "path";
 import { homedir } from "os";
-import { existsSync as existsSync4, cpSync as cpSync2, mkdirSync as mkdirSync3 } from "fs";
+import { existsSync as existsSync5, cpSync as cpSync2, mkdirSync as mkdirSync5 } from "fs";
 import { fileURLToPath as fileURLToPath4 } from "url";
 
 // src/bridge-manager.ts
-import { mkdirSync as mkdirSync2, existsSync as existsSync3, readFileSync as readFileSync3, writeFileSync as writeFileSync2, renameSync, cpSync } from "fs";
+import { mkdirSync as mkdirSync3, existsSync as existsSync3, readFileSync as readFileSync3, writeFileSync as writeFileSync2, renameSync, cpSync } from "fs";
 import { join as join4 } from "path";
 
 // src/bridge.ts
 import { spawn } from "child_process";
+import { createWriteStream, mkdirSync as mkdirSync2 } from "fs";
 import { join as join2, dirname as dirname2 } from "path";
 import { fileURLToPath as fileURLToPath2 } from "url";
 import { EventEmitter } from "events";
@@ -28348,6 +28349,78 @@ function upsertContact(accountId, opts) {
     if (opts.phoneJid) upsertChat(accountId, opts.phoneJid, displayName, (/* @__PURE__ */ new Date(0)).toISOString());
   }
 }
+function listMessagesRaw(accountId, limit, offset) {
+  return queryAll(
+    `SELECT id, chat_jid, sender, content, timestamp, is_from_me, media_type, media_info, filename
+     FROM messages WHERE account_id = ?
+     ORDER BY timestamp DESC
+     LIMIT ? OFFSET ?`,
+    [accountId, limit, offset]
+  ).map((r) => ({
+    id: r.id,
+    chat_jid: r.chat_jid,
+    sender: r.sender,
+    content: r.content ?? "",
+    timestamp: r.timestamp,
+    is_from_me: !!r.is_from_me,
+    media_type: r.media_type ?? null,
+    media_info: r.media_info ? safeParse4(r.media_info) : null,
+    filename: r.filename ?? null
+  }));
+}
+function listChatsRaw(accountId) {
+  return queryAll(
+    `SELECT jid, name, last_message_time, unread_count, archived, parent_group_jid, is_parent_group
+     FROM chats WHERE account_id = ?`,
+    [accountId]
+  ).map((r) => ({
+    jid: r.jid,
+    name: r.name ?? null,
+    last_message_time: r.last_message_time,
+    unread_count: r.unread_count ?? 0,
+    archived: !!r.archived,
+    parent_group_jid: r.parent_group_jid ?? null,
+    is_parent_group: !!r.is_parent_group
+  }));
+}
+function listContactsRaw(accountId) {
+  return queryAll(
+    `SELECT id, lid, phone_jid, name, notify, verified_name
+     FROM contacts WHERE account_id = ?`,
+    [accountId]
+  ).map((r) => ({
+    id: r.id,
+    lid: r.lid ?? null,
+    phone_jid: r.phone_jid ?? null,
+    name: r.name ?? null,
+    notify: r.notify ?? null,
+    verified_name: r.verified_name ?? null
+  }));
+}
+function countMessagesRaw(accountId) {
+  const row = queryOne(`SELECT COUNT(*) AS n FROM messages WHERE account_id = ?`, [accountId]);
+  return row?.n ?? 0;
+}
+function safeParse4(s) {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+function getChatNamesByJid(accountId, jids) {
+  const out = /* @__PURE__ */ new Map();
+  if (jids.length === 0) return out;
+  const placeholders = jids.map(() => "?").join(",");
+  const rows = queryAll(
+    `SELECT jid, name FROM chats WHERE account_id = ? AND jid IN (${placeholders}) AND name IS NOT NULL AND name != ''`,
+    [accountId, ...jids]
+  );
+  for (const r of rows) {
+    if (r.name) out.set(r.jid, r.name);
+  }
+  return out;
+}
 function getStoreDiagnostics(accountId) {
   const acFilter = accountId ? " WHERE account_id = ?" : "";
   const acParams = accountId ? [accountId] : [];
@@ -28362,6 +28435,22 @@ function getStoreDiagnostics(accountId) {
     contacts: { total: contactCount?.n, withName: contactWithName?.n },
     messages: { total: msgCount?.n }
   };
+}
+function resolveJidEquivalents(jid, accountId) {
+  const set2 = /* @__PURE__ */ new Set([jid]);
+  if (jid.endsWith("@g.us")) return [jid];
+  const acFilter = accountId ? " AND account_id = ?" : "";
+  const acParams = accountId ? [accountId] : [];
+  const rows = queryAll(
+    `SELECT id, lid, phone_jid FROM contacts WHERE (id = ? OR lid = ? OR phone_jid = ?)${acFilter}`,
+    [jid, jid, jid, ...acParams]
+  );
+  for (const r of rows) {
+    if (r.id) set2.add(r.id);
+    if (r.lid) set2.add(r.lid);
+    if (r.phone_jid) set2.add(r.phone_jid);
+  }
+  return Array.from(set2);
 }
 function resolveContactName(jid, accountId) {
   const acFilter = accountId ? " AND account_id = ?" : "";
@@ -28637,15 +28726,44 @@ function getChat(chatJid, includeLastMessage = true, accountId) {
 function getDirectChatByContact(phone, accountId) {
   const acFilter = accountId ? " AND c.account_id = ?" : "";
   const acParams = accountId ? [accountId] : [];
-  const row = queryOne(
-    `SELECT c.jid, c.account_id, c.name, c.last_message_time,
-            m.content AS last_message, m.sender AS last_sender, m.is_from_me AS last_is_from_me
-     FROM chats c
-     LEFT JOIN messages m ON c.jid = m.chat_jid AND c.account_id = m.account_id AND c.last_message_time = m.timestamp
-     WHERE c.jid LIKE ? AND c.jid NOT LIKE '%@g.us'${acFilter}
-     LIMIT 1`,
-    [`%${phone}%`, ...acParams]
+  const contactAcFilter = accountId ? " AND account_id = ?" : "";
+  const contactRows = queryAll(
+    `SELECT id, lid, phone_jid FROM contacts
+     WHERE (id LIKE ? OR phone_jid LIKE ?)${contactAcFilter}`,
+    [`%${phone}%`, `%${phone}%`, ...accountId ? [accountId] : []]
   );
+  const candidates = /* @__PURE__ */ new Set();
+  for (const r of contactRows) {
+    if (r.id) candidates.add(r.id);
+    if (r.lid) candidates.add(r.lid);
+    if (r.phone_jid) candidates.add(r.phone_jid);
+  }
+  let row;
+  if (candidates.size > 0) {
+    const jids = Array.from(candidates);
+    const placeholders = jids.map(() => "?").join(",");
+    row = queryOne(
+      `SELECT c.jid, c.account_id, c.name, c.last_message_time,
+              m.content AS last_message, m.sender AS last_sender, m.is_from_me AS last_is_from_me
+       FROM chats c
+       LEFT JOIN messages m ON c.jid = m.chat_jid AND c.account_id = m.account_id AND c.last_message_time = m.timestamp
+       WHERE c.jid IN (${placeholders}) AND c.jid NOT LIKE '%@g.us'${acFilter}
+       ORDER BY c.last_message_time DESC
+       LIMIT 1`,
+      [...jids, ...acParams]
+    );
+  } else {
+    row = queryOne(
+      `SELECT c.jid, c.account_id, c.name, c.last_message_time,
+              m.content AS last_message, m.sender AS last_sender, m.is_from_me AS last_is_from_me
+       FROM chats c
+       LEFT JOIN messages m ON c.jid = m.chat_jid AND c.account_id = m.account_id AND c.last_message_time = m.timestamp
+       WHERE c.jid LIKE ? AND c.jid NOT LIKE '%@g.us'${acFilter}
+       ORDER BY c.last_message_time DESC
+       LIMIT 1`,
+      [`%${phone}%`, ...acParams]
+    );
+  }
   if (!row) return null;
   const dict = {
     jid: row.jid,
@@ -28660,6 +28778,8 @@ function getDirectChatByContact(phone, accountId) {
   return dict;
 }
 function getContactChats(jid, limit = 20, page = 0, accountId) {
+  const jids = resolveJidEquivalents(jid, accountId);
+  const placeholders = jids.map(() => "?").join(",");
   const acFilter = accountId ? " AND c.account_id = ?" : "";
   const acParams = accountId ? [accountId] : [];
   return queryAll(
@@ -28667,10 +28787,10 @@ function getContactChats(jid, limit = 20, page = 0, accountId) {
             m.content AS last_message, m.sender AS last_sender, m.is_from_me AS last_is_from_me
      FROM chats c
      JOIN messages m ON c.jid = m.chat_jid AND c.account_id = m.account_id
-     WHERE (m.sender = ? OR c.jid = ?)${acFilter}
+     WHERE (m.sender IN (${placeholders}) OR c.jid IN (${placeholders}))${acFilter}
      ORDER BY c.last_message_time DESC
      LIMIT ? OFFSET ?`,
-    [jid, jid, ...acParams, limit, page * limit]
+    [...jids, ...jids, ...acParams, limit, page * limit]
   ).map((r) => {
     const dict = {
       jid: r.jid,
@@ -28686,15 +28806,17 @@ function getContactChats(jid, limit = 20, page = 0, accountId) {
   });
 }
 function getLastInteraction(jid, accountId) {
+  const jids = resolveJidEquivalents(jid, accountId);
+  const placeholders = jids.map(() => "?").join(",");
   const acFilter = accountId ? " AND m.account_id = ?" : "";
   const acParams = accountId ? [accountId] : [];
   const row = queryOne(
     `SELECT m.id, m.chat_jid, m.account_id, m.sender, m.content, m.timestamp,
             m.is_from_me, m.media_type, m.filename, c.name AS chat_name
      FROM messages m JOIN chats c ON m.chat_jid = c.jid AND m.account_id = c.account_id
-     WHERE (m.sender = ? OR c.jid = ?)${acFilter}
+     WHERE (m.sender IN (${placeholders}) OR c.jid IN (${placeholders}))${acFilter}
      ORDER BY m.timestamp DESC LIMIT 1`,
-    [jid, jid, ...acParams]
+    [...jids, ...jids, ...acParams]
   );
   return row ? toMessageDict(row) : null;
 }
@@ -28750,9 +28872,207 @@ function searchContacts(query, accountId) {
   return results;
 }
 
+// src/mirror.ts
+var log = (msg) => console.error(`[hermeneia:mirror] ${msg}`);
+var DEBOUNCE_MS = 1500;
+var BATCH_THRESHOLD = 50;
+var QUEUE_CAP = 500;
+var REQUEST_TIMEOUT_MS = 9e4;
+var BACKOFF_MIN_MS = 5e3;
+var BACKOFF_MAX_MS = 6e4;
+var LOG_RATELIMIT_MS = 6e4;
+var enabled = false;
+var baseUrl = "";
+var token = "";
+var allowlist = null;
+var queues = /* @__PURE__ */ new Map();
+var backoffUntil = 0;
+var currentBackoff = BACKOFF_MIN_MS;
+var lastErrorLogAt = 0;
+function initMirror() {
+  const url2 = process.env.EPISTOLE_MIRROR_URL?.trim();
+  const tok = process.env.EPISTOLE_MIRROR_TOKEN?.trim();
+  const list = process.env.EPISTOLE_MIRROR_ACCOUNTS?.trim();
+  if (!url2 || !tok) {
+    enabled = false;
+    return { enabled: false, info: "disabled (EPISTOLE_MIRROR_URL/TOKEN unset)" };
+  }
+  baseUrl = url2.replace(/\/+$/, "");
+  token = tok;
+  allowlist = list ? new Set(list.split(",").map((s) => s.trim()).filter(Boolean)) : null;
+  enabled = true;
+  const scope = allowlist ? `accounts: ${[...allowlist].join(",")}` : "all accounts";
+  return { enabled: true, info: `${baseUrl} (${scope})` };
+}
+function isMirrorEnabled() {
+  return enabled;
+}
+function accountAllowed(accountId) {
+  if (!enabled) return false;
+  if (!allowlist) return true;
+  return allowlist.has(accountId);
+}
+function getQueue(accountId) {
+  let q = queues.get(accountId);
+  if (!q) {
+    q = { messages: [], chats: [], contacts: [], timer: null };
+    queues.set(accountId, q);
+  }
+  return q;
+}
+function scheduleFlush(accountId) {
+  const q = getQueue(accountId);
+  const size = q.messages.length + q.chats.length + q.contacts.length;
+  if (size >= BATCH_THRESHOLD) {
+    flushAccount(accountId).catch(() => {
+    });
+    return;
+  }
+  if (q.timer) return;
+  q.timer = setTimeout(() => {
+    q.timer = null;
+    flushAccount(accountId).catch(() => {
+    });
+  }, DEBOUNCE_MS);
+}
+function enqueueCapped(arr, item) {
+  arr.push(item);
+  if (arr.length > QUEUE_CAP) arr.splice(0, arr.length - QUEUE_CAP);
+}
+function mirrorMessage(accountId, m) {
+  if (!accountAllowed(accountId)) return;
+  try {
+    enqueueCapped(getQueue(accountId).messages, m);
+    scheduleFlush(accountId);
+  } catch (err) {
+    rateLimitedLog(`mirrorMessage enqueue failed: ${err?.message ?? err}`);
+  }
+}
+function mirrorChat(accountId, c) {
+  if (!accountAllowed(accountId)) return;
+  try {
+    enqueueCapped(getQueue(accountId).chats, c);
+    scheduleFlush(accountId);
+  } catch (err) {
+    rateLimitedLog(`mirrorChat enqueue failed: ${err?.message ?? err}`);
+  }
+}
+function mirrorContact(accountId, c) {
+  if (!accountAllowed(accountId)) return;
+  try {
+    enqueueCapped(getQueue(accountId).contacts, c);
+    scheduleFlush(accountId);
+  } catch (err) {
+    rateLimitedLog(`mirrorContact enqueue failed: ${err?.message ?? err}`);
+  }
+}
+async function pushBatch(accountId, opts) {
+  if (!enabled) throw new Error("Epistole mirror is not configured");
+  const body = { account_id: accountId };
+  if (opts.accountLabel) body.account_label = opts.accountLabel;
+  if (opts.phone) body.phone = opts.phone;
+  if (opts.messages?.length) body.messages = enrichMessagesWithChatName(accountId, opts.messages);
+  if (opts.chats?.length) body.chats = opts.chats;
+  if (opts.contacts?.length) body.contacts = opts.contacts;
+  const res = await doPost("/api/wa/push", body);
+  if (!res.ok) throw new Error(`Epistole push failed: HTTP ${res.status}`);
+  const json3 = await res.json();
+  return {
+    messages_written: json3.messages_written ?? 0,
+    chats_written: json3.chats_written ?? 0,
+    contacts_written: json3.contacts_written ?? 0,
+    embedded: json3.embedded ?? 0
+  };
+}
+async function flushAccount(accountId) {
+  if (!enabled) return;
+  const q = getQueue(accountId);
+  if (q.messages.length === 0 && q.chats.length === 0 && q.contacts.length === 0) return;
+  if (Date.now() < backoffUntil) {
+    return;
+  }
+  const messages = q.messages.splice(0, q.messages.length);
+  const chats = q.chats.splice(0, q.chats.length);
+  const contacts = q.contacts.splice(0, q.contacts.length);
+  const body = { account_id: accountId };
+  if (messages.length) body.messages = enrichMessagesWithChatName(accountId, messages);
+  if (chats.length) body.chats = chats;
+  if (contacts.length) body.contacts = contacts;
+  try {
+    const res = await doPost("/api/wa/push", body);
+    if (!res.ok) {
+      triggerBackoff(`/api/wa/push HTTP ${res.status}`);
+      return;
+    }
+    currentBackoff = BACKOFF_MIN_MS;
+    backoffUntil = 0;
+  } catch (err) {
+    triggerBackoff(`/api/wa/push ${err?.message ?? err}`);
+  }
+}
+async function mirrorHeartbeat(accountId, label, phone) {
+  if (!accountAllowed(accountId)) return;
+  if (Date.now() < backoffUntil) return;
+  try {
+    const res = await doPost("/api/wa/heartbeat", { account_id: accountId, label, phone });
+    if (!res.ok) {
+      rateLimitedLog(`heartbeat HTTP ${res.status}`);
+    }
+  } catch (err) {
+    rateLimitedLog(`heartbeat ${err?.message ?? err}`);
+  }
+}
+function enrichMessagesWithChatName(accountId, msgs) {
+  try {
+    const jids = Array.from(new Set(msgs.map((m) => m.chat_jid)));
+    const names = getChatNamesByJid(accountId, jids);
+    return msgs.map((m) => {
+      const name = names.get(m.chat_jid);
+      return name ? { ...m, chat_name: name } : m;
+    });
+  } catch {
+    return msgs;
+  }
+}
+async function doPost(path2, body) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(baseUrl + path2, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify(body),
+      signal: ctrl.signal
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function triggerBackoff(reason) {
+  backoffUntil = Date.now() + currentBackoff;
+  rateLimitedLog(`${reason} \u2014 backing off for ${Math.round(currentBackoff / 1e3)}s`);
+  currentBackoff = Math.min(currentBackoff * 2, BACKOFF_MAX_MS);
+}
+function rateLimitedLog(msg) {
+  const now = Date.now();
+  if (now - lastErrorLogAt < LOG_RATELIMIT_MS) return;
+  lastErrorLogAt = now;
+  log(msg);
+}
+async function flushAll() {
+  if (!enabled) return;
+  await Promise.all(
+    Array.from(queues.keys()).map((id) => flushAccount(id).catch(() => {
+    }))
+  );
+}
+
 // src/bridge.ts
 var __dirname3 = dirname2(fileURLToPath2(import.meta.url));
-var log = (msg) => console.error(`[hermeneia] ${msg}`);
+var log2 = (msg) => console.error(`[hermeneia] ${msg}`);
 function getBinaryName() {
   const platform2 = process.platform === "win32" ? "windows" : process.platform;
   const arch2 = process.arch === "x64" ? "amd64" : process.arch;
@@ -28762,17 +29082,21 @@ function getBinaryName() {
 var WhatsAppBridge = class extends EventEmitter {
   proc = null;
   dataDir;
+  logDir;
+  logStream = null;
   _accountId;
   _connected = false;
   _authenticated = false;
   _currentQR = null;
   _displayName = null;
   _phone = null;
+  _lastEventTime = Date.now();
   pendingRequests = /* @__PURE__ */ new Map();
   reqCounter = 0;
-  constructor(dataDir2, accountId = "default") {
+  constructor(dataDir2, accountId = "default", logDir = null) {
     super();
     this.dataDir = dataDir2;
+    this.logDir = logDir;
     this._accountId = accountId;
   }
   get accountId() {
@@ -28799,6 +29123,22 @@ var WhatsAppBridge = class extends EventEmitter {
   }
   get isConnected() {
     return this._connected && this._authenticated;
+  }
+  get lastEventTime() {
+    return this._lastEventTime;
+  }
+  get pid() {
+    return this.proc?.pid ?? null;
+  }
+  /** Force-kill the Go subprocess (watchdog use). */
+  forceKill(signal = "SIGKILL") {
+    if (this.proc && !this.proc.killed) {
+      try {
+        this.proc.kill(signal);
+      } catch {
+      }
+    }
+    this._connected = false;
   }
   // Kept for API compatibility (qr-server uses it)
   get socket() {
@@ -28837,8 +29177,24 @@ var WhatsAppBridge = class extends EventEmitter {
         );
       }
     }
-    log(`Starting Go bridge: ${binaryPath}`);
-    log(`Data directory: ${this.dataDir}`);
+    log2(`Starting Go bridge: ${binaryPath}`);
+    log2(`Data directory: ${this.dataDir}`);
+    if (this.logDir) {
+      try {
+        mkdirSync2(this.logDir, { recursive: true });
+        const logPath = join2(this.logDir, `bridge-${this._accountId}.log`);
+        this.logStream = createWriteStream(logPath, { flags: "a" });
+        this.logStream.write(
+          `
+=== ${(/* @__PURE__ */ new Date()).toISOString()} \u2014 bridge start (${this._accountId}) ===
+`
+        );
+        log2(`Bridge stderr \u2192 ${logPath}`);
+      } catch (err) {
+        log2(`Could not open bridge log: ${err?.message ?? err}`);
+        this.logStream = null;
+      }
+    }
     this.proc = spawn(binaryPath, [this.dataDir], {
       stdio: ["pipe", "pipe", "pipe"]
     });
@@ -28848,31 +29204,45 @@ var WhatsAppBridge = class extends EventEmitter {
         const evt = JSON.parse(line);
         this.handleEvent(evt);
       } catch (err) {
-        log(`Invalid JSON from bridge: ${line}`);
+        log2(`Invalid JSON from bridge: ${line}`);
       }
     });
     this.proc.stderr?.on("data", (data) => {
-      const text2 = data.toString().trim();
-      if (text2) console.error(text2);
+      const text2 = data.toString();
+      if (text2.trim()) console.error(text2.trimEnd());
+      this.logStream?.write(text2);
     });
-    this.proc.on("exit", (code) => {
-      log(`Go bridge exited with code ${code}`);
+    this.proc.on("exit", (code, signal) => {
+      log2(`Go bridge exited with code ${code}${signal ? ` (signal ${signal})` : ""}`);
       this._connected = false;
+      this._authenticated = false;
+      this.proc = null;
+      try {
+        this.logStream?.write(
+          `=== ${(/* @__PURE__ */ new Date()).toISOString()} \u2014 bridge exit code=${code} signal=${signal ?? ""} ===
+`
+        );
+        this.logStream?.end();
+      } catch {
+      }
+      this.logStream = null;
       if (code !== 0 && code !== null) {
         this.emit("error", new Error(`Bridge process exited with code ${code}`));
       }
+      this.emit("exit", { code, signal });
     });
     this.proc.on("error", (err) => {
-      log(`Go bridge spawn error: ${err.message}`);
+      log2(`Go bridge spawn error: ${err.message}`);
     });
   }
   handleEvent(evt) {
+    this._lastEventTime = Date.now();
     switch (evt.type) {
       case "qr":
         this._currentQR = evt.data;
         this._authenticated = false;
         this.emit("qr", evt.data);
-        log("QR code generated \u2014 open the setup page to scan");
+        log2("QR code generated \u2014 open the setup page to scan");
         break;
       case "connected":
         this._connected = true;
@@ -28885,7 +29255,7 @@ var WhatsAppBridge = class extends EventEmitter {
           this._displayName = evt.push_name;
         }
         this.emit("connected");
-        log(`Connected to WhatsApp! (account: ${this._accountId})`);
+        log2(`Connected to WhatsApp! (account: ${this._accountId})`);
         break;
       case "account_info":
         if (evt.phone) this._phone = evt.phone;
@@ -28897,7 +29267,7 @@ var WhatsAppBridge = class extends EventEmitter {
         this._authenticated = false;
         this._currentQR = null;
         this.emit("logged_out");
-        log("Logged out \u2014 restart to re-authenticate");
+        log2("Logged out \u2014 restart to re-authenticate");
         break;
       case "message": {
         const timestamp = evt.timestamp;
@@ -28926,6 +29296,20 @@ var WhatsAppBridge = class extends EventEmitter {
             null,
             mediaInfo
           );
+          try {
+            mirrorMessage(this._accountId, {
+              id: messageId,
+              chat_jid: chatJid,
+              sender,
+              content,
+              timestamp,
+              is_from_me: isFromMe,
+              media_type: mediaType,
+              media_info: evt.media_info ?? null,
+              filename: evt.media_info?.Filename ?? evt.media_info?.filename ?? null
+            });
+          } catch {
+          }
         }
         this.emit("message", {
           id: messageId,
@@ -28946,6 +29330,18 @@ var WhatsAppBridge = class extends EventEmitter {
           parentGroupJid: evt.parent_group_jid || void 0,
           isParentGroup: evt.is_parent_group ?? void 0
         });
+        try {
+          mirrorChat(this._accountId, {
+            jid: evt.jid,
+            name: evt.name || null,
+            last_message_time: evt.last_message_time,
+            unread_count: evt.unread_count ?? void 0,
+            archived: evt.archived ?? void 0,
+            parent_group_jid: evt.parent_group_jid || null,
+            is_parent_group: evt.is_parent_group ?? void 0
+          });
+        } catch {
+        }
         break;
       case "contact":
         upsertContact(this._accountId, {
@@ -28956,12 +29352,23 @@ var WhatsAppBridge = class extends EventEmitter {
           notify: evt.notify || null,
           verifiedName: evt.verified_name ?? null
         });
+        try {
+          mirrorContact(this._accountId, {
+            id: evt.id,
+            lid: evt.lid || null,
+            phone_jid: evt.phone_jid || null,
+            name: evt.name || null,
+            notify: evt.notify || null,
+            verified_name: evt.verified_name ?? null
+          });
+        } catch {
+        }
         break;
       case "contacts_ready":
-        log(`Contacts ready: ${evt.count} contacts loaded`);
+        log2(`Contacts ready: ${evt.count} contacts loaded`);
         break;
       case "error":
-        log(`Bridge error: ${evt.message}`);
+        log2(`Bridge error: ${evt.message}`);
         break;
       case "response": {
         const pending = this.pendingRequests.get(evt.req_id);
@@ -29045,9 +29452,10 @@ var import_qrcode = __toESM(require_lib(), 1);
 import { createServer } from "http";
 import { existsSync as existsSync2, readFileSync as readFileSync2 } from "fs";
 import { join as join3 } from "path";
-var log2 = (msg) => console.error(`[hermeneia:qr] ${msg}`);
+var log3 = (msg) => console.error(`[hermeneia:qr] ${msg}`);
 var server = null;
 var sessions = /* @__PURE__ */ new Map();
+var autoOpenedAccounts = /* @__PURE__ */ new Set();
 function getOrCreateSession(bridge, accountId) {
   let session = sessions.get(accountId);
   if (!session) {
@@ -29212,7 +29620,7 @@ async function applyQR(accountId, qrString) {
     const session = sessions.get(accountId);
     if (session) session.qrDataUrl = dataUrl;
   } catch (err) {
-    log2(`QR generation error: ${err}`);
+    log3(`QR generation error: ${err}`);
   }
 }
 function startQRServer(bridge, port = 3456, initialQr, dataDir2, accountId = "default") {
@@ -29280,15 +29688,15 @@ function startQRServer(bridge, port = 3456, initialQr, dataDir2, accountId = "de
     });
     server.on("error", (err) => {
       if (err.code === "EADDRINUSE") {
-        log2(`Port ${port} in use, trying ${port + 1}`);
+        log3(`Port ${port} in use, trying ${port + 1}`);
         server?.listen(port + 1);
       } else {
-        log2(`QR server error: ${err.message}`);
+        log3(`QR server error: ${err.message}`);
       }
     });
     server.listen(port, () => {
       const actualPort = server?.address()?.port ?? port;
-      log2(`Setup page: http://localhost:${actualPort}/setup`);
+      log3(`Setup page: http://localhost:${actualPort}/setup`);
     });
   }
   let hasExistingAuth = false;
@@ -29300,14 +29708,17 @@ function startQRServer(bridge, port = 3456, initialQr, dataDir2, accountId = "de
     }
   } catch {
   }
-  if (!hasExistingAuth) {
+  if (!hasExistingAuth && !autoOpenedAccounts.has(accountId)) {
+    autoOpenedAccounts.add(accountId);
     setTimeout(() => {
       const actualPort = server?.address()?.port ?? port;
       const setupUrl = accountId === "default" ? `http://localhost:${actualPort}/setup` : `http://localhost:${actualPort}/setup/${accountId}`;
       openBrowser(setupUrl);
     }, 500);
+  } else if (hasExistingAuth) {
+    log3(`QR generated during reconnect for "${accountId}" \u2014 not auto-opening browser`);
   } else {
-    log2(`QR generated during reconnect for "${accountId}" \u2014 not auto-opening browser`);
+    log3(`QR regenerated for "${accountId}" \u2014 setup page already open, not reopening`);
   }
 }
 function stopQRServer() {
@@ -29315,7 +29726,7 @@ function stopQRServer() {
     server.close();
     server = null;
     sessions.clear();
-    log2("QR server stopped");
+    log3("QR server stopped");
   }
 }
 async function openBrowser(url2) {
@@ -29323,20 +29734,56 @@ async function openBrowser(url2) {
     const open2 = (await Promise.resolve().then(() => (init_open(), open_exports))).default;
     await open2(url2);
   } catch {
-    log2(`Open ${url2} in your browser to connect WhatsApp`);
+    log3(`Open ${url2} in your browser to connect WhatsApp`);
+  }
+}
+
+// src/notify.ts
+import { spawn as spawn2 } from "child_process";
+function notify(title, body) {
+  if (process.platform !== "darwin") return;
+  const esc2 = (s) => s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  try {
+    const proc = spawn2(
+      "osascript",
+      ["-e", `display notification "${esc2(body)}" with title "${esc2(title)}"`],
+      { stdio: "ignore", detached: true }
+    );
+    proc.on("error", () => {
+    });
+    proc.unref();
+  } catch {
   }
 }
 
 // src/bridge-manager.ts
-var log3 = (msg) => console.error(`[hermeneia:manager] ${msg}`);
+var log4 = (msg) => console.error(`[hermeneia:manager] ${msg}`);
 var BridgeManager = class {
   bridges = /* @__PURE__ */ new Map();
   dataDir;
   qrPort;
   onMessage;
+  watchdogTimer = null;
+  shuttingDown = false;
+  // Tracks exponential-backoff delay per account id for respawn attempts.
+  respawnBackoff = /* @__PURE__ */ new Map();
+  // Consecutive failed respawns without a successful "connected" event in between.
+  // Once this exceeds the cap, we stop respawning and notify the user — the
+  // session is genuinely dead (revoked/logged-out) and retrying is futile.
+  consecutiveFailures = /* @__PURE__ */ new Map();
+  respawnCap;
+  // Watchdog timeout: if a connected bridge has received no events for this long, kill + respawn.
+  watchdogTimeoutMs;
+  watchdogCheckMs;
   constructor(dataDir2, qrPort2) {
     this.dataDir = dataDir2;
     this.qrPort = qrPort2;
+    this.watchdogTimeoutMs = parseInt(process.env.HERMENEIA_WATCHDOG_TIMEOUT_MS ?? "300000", 10);
+    this.watchdogCheckMs = parseInt(process.env.HERMENEIA_WATCHDOG_CHECK_MS ?? "60000", 10);
+    this.respawnCap = parseInt(process.env.HERMENEIA_RESPAWN_CAP ?? "5", 10);
+  }
+  logDirPath() {
+    return join4(this.dataDir, "logs");
   }
   setMessageHandler(handler) {
     this.onMessage = handler;
@@ -29348,27 +29795,54 @@ var BridgeManager = class {
     const defaultDir = join4(accountsDir, "default");
     if (!existsSync3(oldWhatsmeow)) return;
     if (existsSync3(join4(defaultDir, "whatsmeow.db"))) return;
-    log3("Migrating old single-account layout to accounts/default/...");
-    mkdirSync2(defaultDir, { recursive: true });
+    log4("Migrating old single-account layout to accounts/default/...");
+    mkdirSync3(defaultDir, { recursive: true });
     renameSync(oldWhatsmeow, join4(defaultDir, "whatsmeow.db"));
     const oldAuth = join4(this.dataDir, "auth");
     if (existsSync3(oldAuth)) {
       cpSync(oldAuth, join4(defaultDir, "auth"), { recursive: true });
     }
     this.saveAccounts([{ id: "default", name: null, phone: null }]);
-    log3("Migration complete");
+    log4("Migration complete");
   }
   /** Start all saved accounts */
   async startup() {
     this.migrateOldLayout();
     const accounts = this.loadAccounts();
     if (accounts.length === 0) {
-      log3("No accounts found, creating default account...");
+      log4("No accounts found, creating default account...");
       await this.addAccount("default");
       return;
     }
     for (const account of accounts) {
       await this.startBridge(account.id, account.name, account.phone);
+    }
+    this.startWatchdog();
+  }
+  startWatchdog() {
+    if (this.watchdogTimer) return;
+    this.watchdogTimer = setInterval(() => this.watchdogTick(), this.watchdogCheckMs);
+    this.watchdogTimer.unref?.();
+    log4(
+      `Watchdog started \u2014 check every ${Math.round(this.watchdogCheckMs / 1e3)}s, timeout ${Math.round(this.watchdogTimeoutMs / 1e3)}s`
+    );
+  }
+  watchdogTick() {
+    if (this.shuttingDown) return;
+    const now = Date.now();
+    for (const [id, bridge] of this.bridges) {
+      if (!bridge.isConnected) continue;
+      const idle = now - bridge.lastEventTime;
+      if (isMirrorEnabled()) {
+        mirrorHeartbeat(id, bridge.displayName, bridge.phone).catch(() => {
+        });
+      }
+      if (idle > this.watchdogTimeoutMs) {
+        log4(
+          `Watchdog: no events from "${id}" for ${Math.round(idle / 1e3)}s \u2014 killing PID ${bridge.pid ?? "?"} and respawning`
+        );
+        bridge.forceKill("SIGKILL");
+      }
     }
   }
   /** Add and start a new account */
@@ -29377,7 +29851,7 @@ var BridgeManager = class {
       throw new Error(`Account "${id}" already exists`);
     }
     const accountDir = join4(this.dataDir, "accounts", id);
-    mkdirSync2(accountDir, { recursive: true });
+    mkdirSync3(accountDir, { recursive: true });
     await this.startBridge(id, null, null);
     const accounts = this.loadAccounts();
     if (!accounts.find((a) => a.id === id)) {
@@ -29395,13 +29869,13 @@ var BridgeManager = class {
     this.bridges.delete(id);
     const accounts = this.loadAccounts().filter((a) => a.id !== id);
     this.saveAccounts(accounts);
-    log3(`Removed account: ${id}`);
+    log4(`Removed account: ${id}`);
     return true;
   }
   async startBridge(id, name, phone) {
     const accountDir = join4(this.dataDir, "accounts", id);
-    mkdirSync2(accountDir, { recursive: true });
-    const bridge = new WhatsAppBridge(accountDir, id);
+    mkdirSync3(accountDir, { recursive: true });
+    const bridge = new WhatsAppBridge(accountDir, id, this.logDirPath());
     bridge.setQrPort(this.qrPort);
     bridge.displayName = name;
     bridge.phone = phone;
@@ -29409,8 +29883,19 @@ var BridgeManager = class {
       startQRServer(bridge, this.qrPort, qr, accountDir, id);
     });
     bridge.on("connected", () => {
-      log3(`Account "${id}" connected`);
+      log4(`Account "${id}" connected`);
       this.updateAccountInfo(id, bridge.displayName, bridge.phone);
+      this.consecutiveFailures.delete(id);
+      this.respawnBackoff.delete(id);
+    });
+    bridge.on("logged_out", () => {
+      log4(`Account "${id}" was logged out by WhatsApp \u2014 re-scan required`);
+      this.clearAuthState(id);
+      notify(
+        "WhatsApp session expired",
+        `Account "${id}" was logged out. Open http://localhost:${this.qrPort}/setup/${id} to re-scan.`
+      );
+      bridge.forceKill("SIGTERM");
     });
     bridge.on("account_info", () => {
       this.updateAccountInfo(id, bridge.displayName, bridge.phone);
@@ -29419,16 +29904,53 @@ var BridgeManager = class {
       this.onMessage?.(id, msg);
     });
     bridge.on("error", (err) => {
-      log3(`Bridge error (${id}): ${err.message}`);
+      log4(`Bridge error (${id}): ${err.message}`);
+    });
+    bridge.on("exit", () => {
+      if (this.shuttingDown) return;
+      this.scheduleRespawn(id, name, phone);
     });
     this.bridges.set(id, bridge);
     try {
       await bridge.start();
-      log3(`Started bridge for account: ${id}`);
+      log4(`Started bridge for account: ${id}`);
     } catch (err) {
-      log3(`Failed to start bridge for account "${id}": ${err.message}`);
+      log4(`Failed to start bridge for account "${id}": ${err.message}`);
       this.bridges.delete(id);
+      if (!this.shuttingDown) this.scheduleRespawn(id, name, phone);
     }
+  }
+  scheduleRespawn(id, name, phone) {
+    if (this.shuttingDown) return;
+    const failures = (this.consecutiveFailures.get(id) ?? 0) + 1;
+    this.consecutiveFailures.set(id, failures);
+    if (failures > this.respawnCap) {
+      log4(
+        `Giving up on "${id}" after ${failures - 1} consecutive respawn failures. Check logs (data/logs/bridge-${id}.log), then restart Hermeneia to retry.`
+      );
+      notify(
+        "Hermeneia: WhatsApp bridge failed",
+        `Account "${id}" won't stay connected (${failures - 1} retries). Likely needs a re-scan \u2014 see check_status.`
+      );
+      this.bridges.delete(id);
+      return;
+    }
+    const prev = this.respawnBackoff.get(id) ?? 0;
+    const delay = prev === 0 ? 5e3 : Math.min(prev * 2, 3e4);
+    this.respawnBackoff.set(id, delay);
+    log4(
+      `Scheduling respawn of "${id}" in ${Math.round(delay / 1e3)}s (attempt ${failures}/${this.respawnCap})`
+    );
+    setTimeout(() => {
+      if (this.shuttingDown) return;
+      const saved = this.loadAccounts().find((a) => a.id === id);
+      const n = saved?.name ?? name;
+      const p = saved?.phone ?? phone;
+      this.bridges.delete(id);
+      this.startBridge(id, n, p).catch((err) => {
+        log4(`Respawn of "${id}" failed: ${err?.message ?? err}`);
+      });
+    }, delay).unref?.();
   }
   updateAccountInfo(id, name, phone) {
     const accounts = this.loadAccounts();
@@ -29436,6 +29958,15 @@ var BridgeManager = class {
     if (entry) {
       if (name) entry.name = name;
       if (phone) entry.phone = phone;
+      this.saveAccounts(accounts);
+    }
+  }
+  /** Clear saved phone/name for an account so the QR page auto-opens on next QR. */
+  clearAuthState(id) {
+    const accounts = this.loadAccounts();
+    const entry = accounts.find((a) => a.id === id);
+    if (entry) {
+      entry.phone = null;
       this.saveAccounts(accounts);
     }
   }
@@ -29486,12 +30017,21 @@ var BridgeManager = class {
   }
   /** Stop all bridges */
   async stopAll() {
+    this.shuttingDown = true;
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
     for (const [id, bridge] of this.bridges) {
-      log3(`Stopping bridge: ${id}`);
+      log4(`Stopping bridge: ${id}`);
       await bridge.stop();
     }
     this.bridges.clear();
     stopQRServer();
+    try {
+      await flushAll();
+    } catch {
+    }
   }
   // ── Persistence ──────────────────────────────────────────────────
   accountsPath() {
@@ -29761,6 +30301,78 @@ Use the add_account tool to connect a new account, or check if an existing accou
             message: "Media downloaded successfully",
             file_path: filePath,
             mime_type: mime
+          });
+        }
+        case "epistole_backfill": {
+          if (!isMirrorEnabled()) {
+            return text(
+              "Epistole mirror is not configured. Set EPISTOLE_MIRROR_URL and EPISTOLE_MIRROR_TOKEN."
+            );
+          }
+          const id = args?.account_id ?? accountId;
+          if (!id) return text("Missing required argument: account_id");
+          const info = manager.getAllAccountInfo().find((a) => a.id === id);
+          if (!info) return text(`Account "${id}" not found`);
+          const batchSize = Math.min(Math.max(args?.batch_size ?? 100, 1), 500);
+          const maxBatches = args?.max_batches ?? 0;
+          let offset = 0;
+          let batches = 0;
+          let messagesWritten = 0;
+          let embedded = 0;
+          const total = countMessagesRaw(id);
+          const chats = listChatsRaw(id);
+          const contacts = listContactsRaw(id);
+          let chatsWritten = 0;
+          let contactsWritten = 0;
+          try {
+            const r = await pushBatch(id, {
+              accountLabel: info.name,
+              phone: info.phone,
+              chats,
+              contacts
+            });
+            chatsWritten = r.chats_written;
+            contactsWritten = r.contacts_written;
+          } catch (err) {
+            return text(`Backfill failed on chats/contacts: ${err?.message ?? err}`);
+          }
+          while (true) {
+            const msgs = listMessagesRaw(id, batchSize, offset);
+            if (msgs.length === 0) break;
+            try {
+              const r = await pushBatch(id, {
+                accountLabel: info.name,
+                phone: info.phone,
+                messages: msgs
+              });
+              messagesWritten += r.messages_written;
+              embedded += r.embedded;
+            } catch (err) {
+              return json2({
+                partial: true,
+                error: `${err?.message ?? err}`,
+                account_id: id,
+                total_messages: total,
+                messages_written: messagesWritten,
+                chats_written: chatsWritten,
+                contacts_written: contactsWritten,
+                embedded,
+                batches_completed: batches
+              });
+            }
+            offset += msgs.length;
+            batches++;
+            if (maxBatches > 0 && batches >= maxBatches) break;
+          }
+          return json2({
+            ok: true,
+            account_id: id,
+            total_messages: total,
+            messages_written: messagesWritten,
+            chats_written: chatsWritten,
+            contacts_written: contactsWritten,
+            embedded,
+            batches
           });
         }
         default:
@@ -30052,6 +30664,29 @@ Use the add_account tool to connect a new account, or check if an existing accou
           annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true }
         },
         {
+          name: "epistole_backfill",
+          description: "BETA: Push existing local WhatsApp history (chats, contacts, and messages newest-first) to the configured Epistole mirror for semantic indexing. No-op unless EPISTOLE_MIRROR_URL and EPISTOLE_MIRROR_TOKEN are set. Explicit one-shot action \u2014 not automatic.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              account_id: {
+                type: "string",
+                description: "Account ID to backfill (from list_accounts)."
+              },
+              batch_size: {
+                type: "number",
+                description: "Messages per POST (default 100, max 500)."
+              },
+              max_batches: {
+                type: "number",
+                description: "Optional cap on number of batches (0 or unset = unlimited)."
+              }
+            },
+            required: ["account_id"]
+          },
+          annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true }
+        },
+        {
           name: "download_media",
           description: "Download media from a received WhatsApp message.",
           inputSchema: {
@@ -30094,48 +30729,104 @@ function guessMime(filePath) {
   return map2[ext ?? ""] ?? "application/octet-stream";
 }
 
+// src/lockfile.ts
+import { readFileSync as readFileSync5, writeFileSync as writeFileSync3, unlinkSync, existsSync as existsSync4, mkdirSync as mkdirSync4 } from "fs";
+import { join as join5 } from "path";
+var log5 = (msg) => console.error(`[hermeneia:lock] ${msg}`);
+var lockPath = null;
+function acquireLock(dataDir2) {
+  mkdirSync4(dataDir2, { recursive: true });
+  lockPath = join5(dataDir2, "hermeneia.pid");
+  if (existsSync4(lockPath)) {
+    const raw = readFileSync5(lockPath, "utf-8").trim();
+    const pid = parseInt(raw, 10);
+    if (pid > 0 && isAlive(pid)) {
+      log5(`Another Hermeneia is already running (PID ${pid}) \u2014 exiting cleanly.`);
+      return false;
+    }
+    log5(`Stale lock (PID ${raw}) \u2014 taking over.`);
+  }
+  writeFileSync3(lockPath, String(process.pid));
+  log5(`Lock acquired (PID ${process.pid})`);
+  const release = () => {
+    try {
+      if (lockPath && existsSync4(lockPath)) {
+        const raw = readFileSync5(lockPath, "utf-8").trim();
+        if (parseInt(raw, 10) === process.pid) {
+          unlinkSync(lockPath);
+        }
+      }
+    } catch {
+    }
+  };
+  process.on("exit", release);
+  process.on("SIGINT", () => {
+    release();
+    process.exit(0);
+  });
+  process.on("SIGTERM", () => {
+    release();
+    process.exit(0);
+  });
+  return true;
+}
+function isAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // src/index.ts
 var __dirname5 = dirname3(fileURLToPath4(import.meta.url));
-var log4 = (msg) => console.error(`[hermeneia] ${msg}`);
+var log6 = (msg) => console.error(`[hermeneia] ${msg}`);
 function getDataDir() {
   if (process.env.HERMENEIA_DATA_DIR) return process.env.HERMENEIA_DATA_DIR;
   if (process.env.WHATSAPP_DATA_DIR) return process.env.WHATSAPP_DATA_DIR;
   if (process.platform === "darwin") {
-    return join5(homedir(), "Library", "Application Support", "Hermeneia");
+    return join6(homedir(), "Library", "Application Support", "Hermeneia");
   } else if (process.platform === "win32") {
-    return join5(process.env.APPDATA ?? join5(homedir(), "AppData", "Roaming"), "Hermeneia");
+    return join6(process.env.APPDATA ?? join6(homedir(), "AppData", "Roaming"), "Hermeneia");
   }
-  return join5(homedir(), ".hermeneia");
+  return join6(homedir(), ".hermeneia");
 }
 var dataDir = getDataDir();
 function migrateOldDataDir() {
-  const oldDir = join5(__dirname5, "..", "data");
+  const oldDir = join6(__dirname5, "..", "data");
   if (oldDir === dataDir) return;
-  if (!existsSync4(oldDir)) return;
-  if (existsSync4(join5(dataDir, "accounts.json"))) return;
-  log4(`Migrating data from ${oldDir} to ${dataDir}`);
-  mkdirSync3(dataDir, { recursive: true });
+  if (!existsSync5(oldDir)) return;
+  if (existsSync5(join6(dataDir, "accounts.json"))) return;
+  log6(`Migrating data from ${oldDir} to ${dataDir}`);
+  mkdirSync5(dataDir, { recursive: true });
   cpSync2(oldDir, dataDir, { recursive: true });
-  log4("Data migration complete");
+  log6("Data migration complete");
 }
 var qrPort = parseInt(process.env.HERMENEIA_QR_PORT ?? "3456", 10);
 async function main() {
-  log4("Starting Hermeneia...");
+  log6("Starting Hermeneia...");
   migrateOldDataDir();
-  log4(`Data directory: ${dataDir}`);
+  log6(`Data directory: ${dataDir}`);
+  if (!acquireLock(dataDir)) {
+    await new Promise((resolve) => setTimeout(resolve, 2e3));
+    process.exit(0);
+  }
   await initStore(dataDir);
-  log4("Message store ready");
+  log6("Message store ready");
+  const mirrorInfo = initMirror();
+  log6(`Epistole mirror: ${mirrorInfo.info}`);
   const manager = new BridgeManager(dataDir, qrPort);
   manager.setMessageHandler((accountId, msg) => {
     const dir = msg.isFromMe ? "\u2192" : "\u2190";
     const preview = msg.content?.substring(0, 60) ?? "[media]";
-    log4(`[${accountId}] ${dir} ${msg.sender}: ${preview}`);
+    log6(`[${accountId}] ${dir} ${msg.sender}: ${preview}`);
   });
   await manager.startup();
   const mcpServer = new Server(
     {
       name: "hermeneia",
-      version: "0.4.2"
+      version: "0.4.10"
     },
     {
       capabilities: {
@@ -30147,9 +30838,9 @@ async function main() {
   registerTools(mcpServer, manager);
   const transport = new StdioServerTransport();
   await mcpServer.connect(transport);
-  log4("MCP server running on stdio");
+  log6("MCP server running on stdio");
   const shutdown = async () => {
-    log4("Shutting down...");
+    log6("Shutting down...");
     stopQRServer();
     await manager.stopAll();
     await mcpServer.close();

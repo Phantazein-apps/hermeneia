@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "hermeneia",
   "display_name": "WhatsApp (Hermeneia)",
-  "version": "0.4.2",
+  "version": "0.4.10",
   "description": "Read, search, and send WhatsApp messages from Claude. Drag to install, scan a QR code, and you're done.",
   "author": {
     "name": "Phantazein S.L."
@@ -19,7 +19,10 @@
       "command": "node",
       "args": ["${__dirname}/dist/index.js"],
       "env": {
-        "HERMENEIA_DATA_DIR": "${__dirname}/data"
+        "HERMENEIA_QR_PORT": "${user_config.qr_port}",
+        "EPISTOLE_MIRROR_URL": "${user_config.epistole_mirror_url}",
+        "EPISTOLE_MIRROR_TOKEN": "${user_config.epistole_mirror_token}",
+        "EPISTOLE_MIRROR_ACCOUNTS": "${user_config.epistole_mirror_accounts}"
       }
     }
   },
@@ -30,6 +33,28 @@
       "description": "Port for the QR code page (default: 3456). Change if the port is in use.",
       "required": false,
       "default": "3456"
+    },
+    "epistole_mirror_url": {
+      "type": "string",
+      "title": "Epistole mirror URL (beta — optional)",
+      "description": "Only relevant if you have your own Epistole server (a Cloudflare Worker you deploy separately — see the Hermeneia README). Enabling this lets you search your WhatsApp history from the Claude mobile apps alongside email. Leave empty if you don't know what this is.",
+      "required": false,
+      "default": ""
+    },
+    "epistole_mirror_token": {
+      "type": "string",
+      "title": "Epistole mirror token (beta — optional)",
+      "description": "The secret password your Epistole server expects (named WA_BRIDGE_TOKEN on the Epistole side). You set this value when you deployed Epistole. If you can't find it, see the 'Where to find your token' section of the Hermeneia README — you can also rotate it. Leave empty if the URL above is empty.",
+      "sensitive": true,
+      "required": false,
+      "default": ""
+    },
+    "epistole_mirror_accounts": {
+      "type": "string",
+      "title": "Epistole account allowlist (beta — optional)",
+      "description": "Which WhatsApp accounts to mirror, comma-separated (e.g. 'personal,work'). Leave empty to mirror every connected account — this is what most people want.",
+      "required": false,
+      "default": ""
     }
   },
   "tools": [
@@ -49,7 +74,8 @@
     { "name": "get_message_context", "description": "Get messages around a specific message" },
     { "name": "list_accounts", "description": "List all connected WhatsApp accounts" },
     { "name": "add_account", "description": "Connect a new WhatsApp account via QR code" },
-    { "name": "remove_account", "description": "Disconnect and remove a WhatsApp account" }
+    { "name": "remove_account", "description": "Disconnect and remove a WhatsApp account" },
+    { "name": "epistole_backfill", "description": "BETA: push existing WhatsApp history to the configured Epistole mirror" }
   ],
   "compatibility": {
     "claude_desktop": ">=1.0.0",

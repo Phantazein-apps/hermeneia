@@ -7,6 +7,8 @@ import { mkdirSync, existsSync, readFileSync, writeFileSync, renameSync, cpSync 
 import { join } from "path";
 import { WhatsAppBridge } from "./bridge.js";
 import { startQRServer, stopQRServer } from "./qr-server.js";
+import { isMirrorEnabled, mirrorHeartbeat, flushAll as flushMirror } from "./mirror.js";
+import { notify } from "./notify.js";
 import type { AccountInfo } from "./types.js";
 
 const log = (msg: string) => console.error(`[hermeneia:manager] ${msg}`);
@@ -22,10 +24,29 @@ export class BridgeManager {
   private dataDir: string;
   private qrPort: number;
   private onMessage?: (accountId: string, msg: any) => void;
+  private watchdogTimer: NodeJS.Timeout | null = null;
+  private shuttingDown = false;
+  // Tracks exponential-backoff delay per account id for respawn attempts.
+  private respawnBackoff = new Map<string, number>();
+  // Consecutive failed respawns without a successful "connected" event in between.
+  // Once this exceeds the cap, we stop respawning and notify the user — the
+  // session is genuinely dead (revoked/logged-out) and retrying is futile.
+  private consecutiveFailures = new Map<string, number>();
+  private readonly respawnCap: number;
+  // Watchdog timeout: if a connected bridge has received no events for this long, kill + respawn.
+  private readonly watchdogTimeoutMs: number;
+  private readonly watchdogCheckMs: number;
 
   constructor(dataDir: string, qrPort: number) {
     this.dataDir = dataDir;
     this.qrPort = qrPort;
+    this.watchdogTimeoutMs = parseInt(process.env.HERMENEIA_WATCHDOG_TIMEOUT_MS ?? "300000", 10);
+    this.watchdogCheckMs = parseInt(process.env.HERMENEIA_WATCHDOG_CHECK_MS ?? "60000", 10);
+    this.respawnCap = parseInt(process.env.HERMENEIA_RESPAWN_CAP ?? "5", 10);
+  }
+
+  private logDirPath(): string {
+    return join(this.dataDir, "logs");
   }
 
   setMessageHandler(handler: (accountId: string, msg: any) => void): void {
@@ -74,6 +95,43 @@ export class BridgeManager {
     for (const account of accounts) {
       await this.startBridge(account.id, account.name, account.phone);
     }
+
+    this.startWatchdog();
+  }
+
+  private startWatchdog(): void {
+    if (this.watchdogTimer) return;
+    this.watchdogTimer = setInterval(() => this.watchdogTick(), this.watchdogCheckMs);
+    // Don't keep the process alive just for the watchdog.
+    this.watchdogTimer.unref?.();
+    log(
+      `Watchdog started — check every ${Math.round(this.watchdogCheckMs / 1000)}s, ` +
+        `timeout ${Math.round(this.watchdogTimeoutMs / 1000)}s`
+    );
+  }
+
+  private watchdogTick(): void {
+    if (this.shuttingDown) return;
+    const now = Date.now();
+
+    for (const [id, bridge] of this.bridges) {
+      if (!bridge.isConnected) continue;
+      const idle = now - bridge.lastEventTime;
+
+      // Heartbeat to Epistole for every connected, non-stale bridge
+      if (isMirrorEnabled()) {
+        mirrorHeartbeat(id, bridge.displayName, bridge.phone).catch(() => {});
+      }
+
+      if (idle > this.watchdogTimeoutMs) {
+        log(
+          `Watchdog: no events from "${id}" for ${Math.round(idle / 1000)}s — ` +
+            `killing PID ${bridge.pid ?? "?"} and respawning`
+        );
+        bridge.forceKill("SIGKILL");
+        // The bridge's "exit" handler (wired in startBridge) handles respawn.
+      }
+    }
   }
 
   /** Add and start a new account */
@@ -118,7 +176,7 @@ export class BridgeManager {
     const accountDir = join(this.dataDir, "accounts", id);
     mkdirSync(accountDir, { recursive: true });
 
-    const bridge = new WhatsAppBridge(accountDir, id);
+    const bridge = new WhatsAppBridge(accountDir, id, this.logDirPath());
     bridge.setQrPort(this.qrPort);
     bridge.displayName = name;
     bridge.phone = phone;
@@ -131,6 +189,21 @@ export class BridgeManager {
       log(`Account "${id}" connected`);
       // Update saved account info
       this.updateAccountInfo(id, bridge.displayName, bridge.phone);
+      // Reset respawn counters on successful connect
+      this.consecutiveFailures.delete(id);
+      this.respawnBackoff.delete(id);
+    });
+
+    bridge.on("logged_out", () => {
+      log(`Account "${id}" was logged out by WhatsApp — re-scan required`);
+      // Clear the saved phone so the QR server auto-opens the browser on next QR.
+      this.clearAuthState(id);
+      notify(
+        "WhatsApp session expired",
+        `Account "${id}" was logged out. Open http://localhost:${this.qrPort}/setup/${id} to re-scan.`
+      );
+      // Force-kill so the Go bridge restarts and emits a fresh QR.
+      bridge.forceKill("SIGTERM");
     });
 
     bridge.on("account_info", () => {
@@ -145,15 +218,66 @@ export class BridgeManager {
       log(`Bridge error (${id}): ${err.message}`);
     });
 
+    bridge.on("exit", () => {
+      if (this.shuttingDown) return;
+      // The bridge entry is still in this.bridges (we haven't cleared it).
+      // Schedule a respawn with backoff.
+      this.scheduleRespawn(id, name, phone);
+    });
+
     this.bridges.set(id, bridge);
 
     try {
       await bridge.start();
       log(`Started bridge for account: ${id}`);
+      // Backoff + failure counters reset only on successful "connected" event.
+      // A spawn success with no subsequent connect still counts as a failed attempt.
     } catch (err: any) {
       log(`Failed to start bridge for account "${id}": ${err.message}`);
       this.bridges.delete(id);
+      if (!this.shuttingDown) this.scheduleRespawn(id, name, phone);
     }
+  }
+
+  private scheduleRespawn(id: string, name: string | null, phone: string | null): void {
+    if (this.shuttingDown) return;
+
+    const failures = (this.consecutiveFailures.get(id) ?? 0) + 1;
+    this.consecutiveFailures.set(id, failures);
+
+    if (failures > this.respawnCap) {
+      log(
+        `Giving up on "${id}" after ${failures - 1} consecutive respawn failures. ` +
+          `Check logs (data/logs/bridge-${id}.log), then restart Hermeneia to retry.`
+      );
+      notify(
+        "Hermeneia: WhatsApp bridge failed",
+        `Account "${id}" won't stay connected (${failures - 1} retries). Likely needs a re-scan — see check_status.`
+      );
+      this.bridges.delete(id);
+      return;
+    }
+
+    const prev = this.respawnBackoff.get(id) ?? 0;
+    const delay = prev === 0 ? 5_000 : Math.min(prev * 2, 30_000);
+    this.respawnBackoff.set(id, delay);
+
+    log(
+      `Scheduling respawn of "${id}" in ${Math.round(delay / 1000)}s (attempt ${failures}/${this.respawnCap})`
+    );
+
+    setTimeout(() => {
+      if (this.shuttingDown) return;
+      // Use the latest known name/phone from accounts.json if available.
+      const saved = this.loadAccounts().find((a) => a.id === id);
+      const n = saved?.name ?? name;
+      const p = saved?.phone ?? phone;
+      // Drop the stale bridge entry before restarting.
+      this.bridges.delete(id);
+      this.startBridge(id, n, p).catch((err) => {
+        log(`Respawn of "${id}" failed: ${err?.message ?? err}`);
+      });
+    }, delay).unref?.();
   }
 
   private updateAccountInfo(id: string, name: string | null, phone: string | null): void {
@@ -162,6 +286,16 @@ export class BridgeManager {
     if (entry) {
       if (name) entry.name = name;
       if (phone) entry.phone = phone;
+      this.saveAccounts(accounts);
+    }
+  }
+
+  /** Clear saved phone/name for an account so the QR page auto-opens on next QR. */
+  private clearAuthState(id: string): void {
+    const accounts = this.loadAccounts();
+    const entry = accounts.find((a) => a.id === id);
+    if (entry) {
+      entry.phone = null;
       this.saveAccounts(accounts);
     }
   }
@@ -223,12 +357,20 @@ export class BridgeManager {
 
   /** Stop all bridges */
   async stopAll(): Promise<void> {
+    this.shuttingDown = true;
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
     for (const [id, bridge] of this.bridges) {
       log(`Stopping bridge: ${id}`);
       await bridge.stop();
     }
     this.bridges.clear();
     stopQRServer();
+    try {
+      await flushMirror();
+    } catch {}
   }
 
   // ── Persistence ──────────────────────────────────────────────────
