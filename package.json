@@ -20,12 +20,12 @@
     "sql.js": "^1.11.0"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "@types/node": "^25.6.0",
     "@types/qrcode": "^1.5.5",
     "@types/sql.js": "^1.4.11",
-    "esbuild": "^0.24.0",
+    "esbuild": "^0.28.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.7.0"
+    "typescript": "^6.0.3"
   },
   "engines": {
     "node": ">=18.0.0"
