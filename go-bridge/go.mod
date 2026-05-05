@@ -3,7 +3,7 @@ module hermeneia-bridge
 go 1.25.6
 
 require (
-	github.com/mattn/go-sqlite3 v1.14.42
+	github.com/mattn/go-sqlite3 v1.14.44
 	go.mau.fi/whatsmeow v0.0.0-20260410162419-b95d92207080
 	google.golang.org/protobuf v1.36.11
 )
