@@ -1,9 +1,36 @@
-# Hermeneia
+<div align="center">
 
-WhatsApp bridge for Claude. Drag to install, scan a QR code, chat.
+<img src="assets/banner.svg" alt="Hermeneia — WhatsApp for Claude: drag, scan, chat" width="100%">
 
-> **ἑρμηνεία** — *interpretation, translation between worlds.*
-> From Hermes, messenger of the gods. Part of the [Phantazein](https://phantazein.com) toolkit.
+<p>
+  <a href="https://github.com/Phantazein-apps/hermeneia/releases/latest"><img src="https://img.shields.io/github/v/release/Phantazein-apps/hermeneia?style=flat-square&labelColor=000000&color=ff0018&label=release" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-f4f2ee?style=flat-square&labelColor=000000&logo=apple&logoColor=white" alt="macOS Apple Silicon">
+  <img src="https://img.shields.io/badge/Claude-MCP-ff0018?style=flat-square&labelColor=000000" alt="Claude MCP">
+  <img src="https://img.shields.io/badge/license-MIT-a8a5a0?style=flat-square&labelColor=000000" alt="MIT license">
+</p>
+
+**WhatsApp bridge for Claude. Drag to install, scan a QR code, chat.**
+
+<sub>**ἑρμηνεία** — *interpretation, translation between worlds* · from Hermes, messenger of the gods<br>Part of the <a href="https://phantazein.com">Phantazein</a> toolkit</sub>
+
+</div>
+
+---
+
+<table>
+<tr>
+<td><a href="#install">📦 Install</a></td>
+<td><a href="#connect-whatsapp">🔗 Connect</a></td>
+<td><a href="#what-claude-can-do">✨ Capabilities</a></td>
+<td><a href="#multiple-whatsapp-accounts">👥 Multi-account</a></td>
+</tr>
+<tr>
+<td><a href="#privacy">🔒 Privacy</a></td>
+<td><a href="#architecture">🏗 Architecture</a></td>
+<td><a href="#how-hermeneia-compares">⚖️ Comparison</a></td>
+<td><a href="#development">🛠 Development</a></td>
+</tr>
+</table>
 
 ## Install
 
@@ -259,3 +286,9 @@ Requires Go 1.21+ and Node.js 18+.
 ## License
 
 MIT — Phantazein S.L.
+
+---
+
+<div align="center">
+<sub>Built by <a href="https://phantazein.com">Phantazein</a> · <a href="https://github.com/Phantazein-apps">more tools →</a></sub>
+</div>
