@@ -80,9 +80,9 @@ A note on how it works: WhatsApp doesn't offer an official way for personal acco
 
 Connect as many WhatsApp numbers as you want (personal, work, family…):
 
-1. Ask Claude: **"add another WhatsApp account called work"**
+1. Ask your assistant: **"add another WhatsApp account called work"**
 2. A new QR page opens — scan it with the other phone
-3. Done — searches now cover all your accounts, and Claude asks which one to send from
+3. Done — searches now cover all your accounts, and your assistant asks which one to send from
 
 All accounts reconnect automatically on restart.
 
@@ -90,7 +90,7 @@ All accounts reconnect automatically on restart.
 
 <div align="center">
 
-**Everything below this line is for technical users** — using Hermeneia with other AI apps, how it works inside, and how to build it from source. If you just wanted WhatsApp in Claude, you're done. 🎉
+**Everything below this line is for technical users** — using Hermeneia with other AI apps, how it works inside, and how to build it from source. If you just wanted WhatsApp in your AI, you're done. 🎉
 
 </div>
 
@@ -192,7 +192,7 @@ Origin chain: [`lharries/whatsapp-mcp`](https://github.com/lharries/whatsapp-mcp
 - **Archived chat detection** (excluded by default).
 - **Community / parent-group awareness** - chats know which Community they belong to.
 - **Full contact resolution** - phone numbers, LIDs, push names, verified names. Upstream stops at JIDs.
-- **Device shows as "Claude"** in WhatsApp Linked Devices instead of a generic browser string.
+- **Named linked device** in WhatsApp Linked Devices instead of a generic browser string — defaults to "Claude", set your own with `HERMENEIA_DEVICE_NAME` (Refugio brands it).
 - **18 tools** vs upstream's ~10.
 
 ### Vs other WhatsApp MCPs
@@ -213,13 +213,13 @@ Origin chain: [`lharries/whatsapp-mcp`](https://github.com/lharries/whatsapp-mcp
 
 > **Not for everyone.** This section only applies if you run (or plan to run) your own [Epistole](https://github.com/Phantazein-apps/epistole) server — a Cloudflare Worker you deploy to your own Cloudflare account. If you don't have one, none of this applies; skip the section and use Hermeneia as-is from your Mac. Setting up Epistole is a separate ~30-minute project; see Epistole's README.
 
-Hermeneia can optionally push a copy of incoming WhatsApp events to a remote Epistole instance so that Epistole's `semantic_search` indexes WhatsApp history alongside email. **Off by default.** Enabling the mirror does not change any existing behavior — sends, media, and the local `messages.db` all still live on your Mac.
+Hermeneia can optionally push a copy of incoming WhatsApp events to a remote Epistole instance so that Epistole's `semantic_search` indexes WhatsApp history alongside email. **Off by default.** Enabling the mirror does not change any existing behavior — sends, media, and the local `messages.db` all still live on the host running Hermeneia.
 
 ### Why would you want this?
 
-The main reason: **mobile access**. Hermeneia is a desktop-only extension — your WhatsApp history is only searchable from the Mac running Claude Desktop. Epistole is a Cloudflare Worker you control, reachable from anywhere you have a Claude app (iOS, Android, web) via the remote MCP protocol. Turning on the mirror means:
+The main reason: **remote access**. Hermeneia runs on one machine — your WhatsApp history is only searchable from that host (your Refugio box or the Mac running Claude Desktop). Epistole is a Cloudflare Worker you control, reachable from anywhere via the remote MCP protocol — including the Claude mobile apps (iOS, Android, web). Turning on the mirror means:
 
-- Ask Claude on your phone *"what did Tyler say about Thursday?"* and get hits from WhatsApp + email in the same answer
+- Ask from your phone *"what did Tyler say about Thursday?"* and get hits from WhatsApp + email in the same answer
 - Semantic search (not just substring) across your WhatsApp messages — *"the message where my mom sent the Airbnb link"*
 - Unified ranking across channels — one query, results from email and WhatsApp interleaved by relevance
 
@@ -234,8 +234,8 @@ It's strictly additive. Your desktop Hermeneia keeps doing everything it did bef
 
 ### What it does NOT do
 
-- **No media bytes are uploaded.** Only metadata (media type, filename, caption text). Voice notes, photos, docs stay on your Mac.
-- **No remote sends.** Epistole cannot send WhatsApp messages through Hermeneia — the channel is push-only, Hermeneia → Epistole. If you ask Claude on your phone "send Tyler a message", that tool isn't exposed. You'd need to be at your Mac.
+- **No media bytes are uploaded.** Only metadata (media type, filename, caption text). Voice notes, photos, docs stay on your host.
+- **No remote sends.** Epistole cannot send WhatsApp messages through Hermeneia — the channel is push-only, Hermeneia → Epistole. If you ask from your phone "send Tyler a message", that tool isn't exposed. You'd need to be on the host running Hermeneia.
 - **No state dependency.** If Epistole is unreachable, the call is dropped after short exponential backoff; Hermeneia keeps running normally. Lossy by design — the local `messages.db` remains the source of truth.
 - **No cloud-locked contacts.** `chat_name` is passed at embedding time only (improves retrieval quality for group-scoped queries); Epistole doesn't store a copy of your contact list beyond what it needs for search.
 
@@ -298,17 +298,17 @@ You can cap the run with `max_batches: N` (each batch is 100 messages, newest-fi
 
 ### Where to run `epistole_backfill`
 
-**Only from a regular Claude Desktop chat** — the normal chat window in the macOS Claude Desktop app. That's the only surface where Hermeneia's tools are visible.
+**From a surface where Hermeneia's own tools are live** — that means Open WebUI when you run Hermeneia under Refugio, or a regular Claude Desktop chat. Those are the surfaces that can actually reach the local bridge.
 
 Places the tool *won't* be available:
 
-- **Cowork** — runs your task in the cloud, can only reach remote/cloud MCPs. Hermeneia is a local Mac-only extension.
-- **Claude mobile / Claude.ai web** — same reason. They can't reach the Node process sitting on your Mac.
+- **Cowork** — runs your task in the cloud, can only reach remote/cloud MCPs, not the local Hermeneia process.
+- **Claude mobile / Claude.ai web** — same reason. They can't reach the Node process sitting on your host.
 - **Claude Code** (CLI) — uses its own MCP config, doesn't automatically include Claude Desktop's extensions.
 
-If you try to run `epistole_backfill` from any of those and see *"no tool called epistole_backfill available"*, it's not broken — you're on the wrong surface. Switch to a regular Claude Desktop chat.
+If you try to run `epistole_backfill` from any of those and see *"no tool called epistole_backfill available"*, it's not broken — you're on the wrong surface. Switch to Open WebUI (Refugio) or a Claude Desktop chat.
 
-This split is intentional and is actually the point of the mirror: you **backfill and live-mirror from the Mac** (writer side), then **search the mirrored data from anywhere via Epistole's `semantic_search`** (reader side — works from mobile, web, Cowork, Code, everywhere).
+This split is intentional and is actually the point of the mirror: you **backfill and live-mirror from the host** (writer side), then **search the mirrored data from anywhere via Epistole's `semantic_search`** (reader side — works from mobile, web, Cowork, Code, everywhere).
 
 ### WhatsApp sync is not exhaustive — and never will be
 
