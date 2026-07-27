@@ -8,10 +8,12 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "node esbuild.config.mjs",
+    "build:ts": "cross-env HERMENEIA_SKIP_GO_BUILD=1 node esbuild.config.mjs",
     "dev": "tsx src/index.ts",
     "mcp": "node dist/index.js",
     "pack": "npm run build && npx @anthropic-ai/mcpb pack",
-    "validate": "npx @anthropic-ai/mcpb validate"
+    "validate": "npx @anthropic-ai/mcpb validate",
+    "test:demo": "npm run build:ts && node test/demo-smoke.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
@@ -23,6 +25,7 @@
     "@types/node": "^22.0.0",
     "@types/qrcode": "^1.5.5",
     "@types/sql.js": "^1.4.11",
+    "cross-env": "^7.0.3",
     "esbuild": "^0.24.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"

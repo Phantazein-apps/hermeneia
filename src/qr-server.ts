@@ -308,10 +308,12 @@ export function startQRServer(
   // before generating the QR code.
   let hasExistingAuth = false;
   try {
-    const accountsPath = join(dataDir, "..", "accounts.json");
-    if (existsSync(accountsPath)) {
-      const accounts = JSON.parse(readFileSync(accountsPath, "utf-8"));
-      hasExistingAuth = accounts.some((a: any) => a.id === accountId && a.phone);
+    if (dataDir) {
+      const accountsPath = join(dataDir, "..", "accounts.json");
+      if (existsSync(accountsPath)) {
+        const accounts = JSON.parse(readFileSync(accountsPath, "utf-8"));
+        hasExistingAuth = accounts.some((a: any) => a.id === accountId && a.phone);
+      }
     }
   } catch {}
   // Only auto-open the browser the FIRST time we emit a QR for this account

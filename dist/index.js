@@ -17,20 +17,11 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
   if (typeof require !== "undefined") return require.apply(this, arguments);
   throw Error('Dynamic require of "' + x + '" is not supported');
 });
-var __esm = (fn, res, err) => function __init() {
-  if (err) throw err[0];
-  try {
-    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
-  } catch (e) {
-    throw err = [e], e;
-  }
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
 var __commonJS = (cb, mod) => function __require2() {
-  try {
-    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
-  } catch (e) {
-    throw mod = 0, e;
-  }
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
 var __export = (target, all) => {
   for (var name in all)
@@ -3129,9 +3120,6 @@ var require_utils = __commonJS({
     "use strict";
     var isUUID = RegExp.prototype.test.bind(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu);
     var isIPv4 = RegExp.prototype.test.bind(/^(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)$/u);
-    var isHexPair = RegExp.prototype.test.bind(/^[\da-f]{2}$/iu);
-    var isUnreserved = RegExp.prototype.test.bind(/^[\da-z\-._~]$/iu);
-    var isPathCharacter = RegExp.prototype.test.bind(/^[\da-z\-._~!$&'()*+,;=:@/]$/iu);
     function stringArrayToHexStripped(input) {
       let acc = "";
       let code = 0;
@@ -3324,77 +3312,27 @@ var require_utils = __commonJS({
       }
       return output.join("");
     }
-    var HOST_DELIMS = { "@": "%40", "/": "%2F", "?": "%3F", "#": "%23", ":": "%3A" };
-    var HOST_DELIM_RE = /[@/?#:]/g;
-    var HOST_DELIM_NO_COLON_RE = /[@/?#]/g;
-    function reescapeHostDelimiters(host, isIP) {
-      const re = isIP ? HOST_DELIM_NO_COLON_RE : HOST_DELIM_RE;
-      re.lastIndex = 0;
-      return host.replace(re, (ch) => HOST_DELIMS[ch]);
-    }
-    function normalizePercentEncoding(input, decodeUnreserved = false) {
-      if (input.indexOf("%") === -1) {
-        return input;
+    function normalizeComponentEncoding(component, esc2) {
+      const func = esc2 !== true ? escape : unescape;
+      if (component.scheme !== void 0) {
+        component.scheme = func(component.scheme);
       }
-      let output = "";
-      for (let i = 0; i < input.length; i++) {
-        if (input[i] === "%" && i + 2 < input.length) {
-          const hex3 = input.slice(i + 1, i + 3);
-          if (isHexPair(hex3)) {
-            const normalizedHex = hex3.toUpperCase();
-            const decoded = String.fromCharCode(parseInt(normalizedHex, 16));
-            if (decodeUnreserved && isUnreserved(decoded)) {
-              output += decoded;
-            } else {
-              output += "%" + normalizedHex;
-            }
-            i += 2;
-            continue;
-          }
-        }
-        output += input[i];
+      if (component.userinfo !== void 0) {
+        component.userinfo = func(component.userinfo);
       }
-      return output;
-    }
-    function normalizePathEncoding(input) {
-      let output = "";
-      for (let i = 0; i < input.length; i++) {
-        if (input[i] === "%" && i + 2 < input.length) {
-          const hex3 = input.slice(i + 1, i + 3);
-          if (isHexPair(hex3)) {
-            const normalizedHex = hex3.toUpperCase();
-            const decoded = String.fromCharCode(parseInt(normalizedHex, 16));
-            if (decoded !== "." && isUnreserved(decoded)) {
-              output += decoded;
-            } else {
-              output += "%" + normalizedHex;
-            }
-            i += 2;
-            continue;
-          }
-        }
-        if (isPathCharacter(input[i])) {
-          output += input[i];
-        } else {
-          output += escape(input[i]);
-        }
+      if (component.host !== void 0) {
+        component.host = func(component.host);
       }
-      return output;
-    }
-    function escapePreservingEscapes(input) {
-      let output = "";
-      for (let i = 0; i < input.length; i++) {
-        if (input[i] === "%" && i + 2 < input.length) {
-          const hex3 = input.slice(i + 1, i + 3);
-          if (isHexPair(hex3)) {
-            output += "%" + hex3.toUpperCase();
-            i += 2;
-            continue;
-          }
-        }
-        output += escape(input[i]);
+      if (component.path !== void 0) {
+        component.path = func(component.path);
       }
-      return output;
+      if (component.query !== void 0) {
+        component.query = func(component.query);
+      }
+      if (component.fragment !== void 0) {
+        component.fragment = func(component.fragment);
+      }
+      return component;
     }
     function recomposeAuthority(component) {
       const uriTokens = [];
@@ -3409,7 +3347,7 @@ var require_utils = __commonJS({
           if (ipV6res.isIPV6 === true) {
             host = `[${ipV6res.escapedHost}]`;
           } else {
-            host = reescapeHostDelimiters(host, false);
+            host = component.host;
           }
         }
         uriTokens.push(host);
@@ -3423,10 +3361,7 @@ var require_utils = __commonJS({
     module.exports = {
       nonSimpleDomain,
       recomposeAuthority,
-      reescapeHostDelimiters,
-      normalizePercentEncoding,
-      normalizePathEncoding,
-      escapePreservingEscapes,
+      normalizeComponentEncoding,
       removeDotSegments,
       isIPv4,
       isUUID,
@@ -3650,12 +3585,12 @@ var require_schemes = __commonJS({
 var require_fast_uri = __commonJS({
   "node_modules/fast-uri/index.js"(exports, module) {
     "use strict";
-    var { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizePercentEncoding, normalizePathEncoding, escapePreservingEscapes, reescapeHostDelimiters, isIPv4, nonSimpleDomain } = require_utils();
+    var { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizeComponentEncoding, isIPv4, nonSimpleDomain } = require_utils();
     var { SCHEMES, getSchemeHandler } = require_schemes();
     function normalize(uri, options) {
       if (typeof uri === "string") {
         uri = /** @type {T} */
-        normalizeString(uri, options);
+        serialize(parse3(uri, options), options);
       } else if (typeof uri === "object") {
         uri = /** @type {T} */
         parse3(serialize(uri, options), options);
@@ -3722,9 +3657,19 @@ var require_fast_uri = __commonJS({
       return target;
     }
     function equal(uriA, uriB, options) {
-      const normalizedA = normalizeComparableURI(uriA, options);
-      const normalizedB = normalizeComparableURI(uriB, options);
-      return normalizedA !== void 0 && normalizedB !== void 0 && normalizedA.toLowerCase() === normalizedB.toLowerCase();
+      if (typeof uriA === "string") {
+        uriA = unescape(uriA);
+        uriA = serialize(normalizeComponentEncoding(parse3(uriA, options), true), { ...options, skipEscape: true });
+      } else if (typeof uriA === "object") {
+        uriA = serialize(normalizeComponentEncoding(uriA, true), { ...options, skipEscape: true });
+      }
+      if (typeof uriB === "string") {
+        uriB = unescape(uriB);
+        uriB = serialize(normalizeComponentEncoding(parse3(uriB, options), true), { ...options, skipEscape: true });
+      } else if (typeof uriB === "object") {
+        uriB = serialize(normalizeComponentEncoding(uriB, true), { ...options, skipEscape: true });
+      }
+      return uriA.toLowerCase() === uriB.toLowerCase();
     }
     function serialize(cmpts, opts) {
       const component = {
@@ -3749,12 +3694,12 @@ var require_fast_uri = __commonJS({
       if (schemeHandler && schemeHandler.serialize) schemeHandler.serialize(component, options);
       if (component.path !== void 0) {
         if (!options.skipEscape) {
-          component.path = escapePreservingEscapes(component.path);
+          component.path = escape(component.path);
           if (component.scheme !== void 0) {
             component.path = component.path.split("%3A").join(":");
           }
         } else {
-          component.path = normalizePercentEncoding(component.path);
+          component.path = unescape(component.path);
         }
       }
       if (options.reference !== "suffix" && component.scheme) {
@@ -3789,17 +3734,7 @@ var require_fast_uri = __commonJS({
       return uriTokens.join("");
     }
     var URI_PARSE = /^(?:([^#/:?]+):)?(?:\/\/((?:([^#/?@]*)@)?(\[[^#/?\]]+\]|[^#/:?]*)(?::(\d*))?))?([^#?]*)(?:\?([^#]*))?(?:#((?:.|[\n\r])*))?/u;
-    var AUTHORITY_PREFIX = /^(?:[^#/:?]+:)?\/\/([^/?#]*)/;
-    function getParseError(parsed, matches) {
-      if (matches[2] !== void 0 && parsed.path && parsed.path[0] !== "/") {
-        return 'URI path must start with "/" when authority is present.';
-      }
-      if (typeof parsed.port === "number" && (parsed.port < 0 || parsed.port > 65535)) {
-        return "URI port is malformed.";
-      }
-      return void 0;
-    }
-    function parseWithStatus(uri, opts) {
+    function parse3(uri, opts) {
       const options = Object.assign({}, opts);
       const parsed = {
         scheme: void 0,
@@ -3810,7 +3745,6 @@ var require_fast_uri = __commonJS({
         query: void 0,
         fragment: void 0
       };
-      let malformedAuthorityOrPort = false;
       let isIP = false;
       if (options.reference === "suffix") {
         if (options.scheme) {
@@ -3818,11 +3752,6 @@ var require_fast_uri = __commonJS({
         } else {
           uri = "//" + uri;
         }
-      }
-      const authorityMatch = uri.match(AUTHORITY_PREFIX);
-      if (authorityMatch !== null && authorityMatch[1].indexOf("\\") !== -1) {
-        parsed.error = "URI authority must not contain a literal backslash.";
-        malformedAuthorityOrPort = true;
       }
       const matches = uri.match(URI_PARSE);
       if (matches) {
@@ -3835,11 +3764,6 @@ var require_fast_uri = __commonJS({
         parsed.fragment = matches[8];
         if (isNaN(parsed.port)) {
           parsed.port = matches[5];
-        }
-        const parseError = getParseError(parsed, matches);
-        if (parseError !== void 0) {
-          parsed.error = parsed.error || parseError;
-          malformedAuthorityOrPort = true;
         }
         if (parsed.host) {
           const ipv4result = isIPv4(parsed.host);
@@ -3867,7 +3791,7 @@ var require_fast_uri = __commonJS({
         if (!options.unicodeSupport && (!schemeHandler || !schemeHandler.unicodeSupport)) {
           if (parsed.host && (options.domainHost || schemeHandler && schemeHandler.domainHost) && isIP === false && nonSimpleDomain(parsed.host)) {
             try {
-              parsed.host = new URL("http://" + parsed.host).hostname;
+              parsed.host = URL.domainToASCII(parsed.host.toLowerCase());
             } catch (e) {
               parsed.error = parsed.error || "Host's domain name can not be converted to ASCII: " + e;
             }
@@ -3879,18 +3803,14 @@ var require_fast_uri = __commonJS({
               parsed.scheme = unescape(parsed.scheme);
             }
             if (parsed.host !== void 0) {
-              parsed.host = reescapeHostDelimiters(unescape(parsed.host), isIP);
+              parsed.host = unescape(parsed.host);
             }
           }
           if (parsed.path) {
-            parsed.path = normalizePathEncoding(parsed.path);
+            parsed.path = escape(unescape(parsed.path));
           }
           if (parsed.fragment) {
-            try {
-              parsed.fragment = encodeURI(decodeURIComponent(parsed.fragment));
-            } catch {
-              parsed.error = parsed.error || "URI malformed";
-            }
+            parsed.fragment = encodeURI(decodeURIComponent(parsed.fragment));
           }
         }
         if (schemeHandler && schemeHandler.parse) {
@@ -3899,29 +3819,7 @@ var require_fast_uri = __commonJS({
       } else {
         parsed.error = parsed.error || "URI can not be parsed.";
       }
-      return { parsed, malformedAuthorityOrPort };
-    }
-    function parse3(uri, opts) {
-      return parseWithStatus(uri, opts).parsed;
-    }
-    function normalizeString(uri, opts) {
-      return normalizeStringWithStatus(uri, opts).normalized;
-    }
-    function normalizeStringWithStatus(uri, opts) {
-      const { parsed, malformedAuthorityOrPort } = parseWithStatus(uri, opts);
-      return {
-        normalized: malformedAuthorityOrPort ? uri : serialize(parsed, opts),
-        malformedAuthorityOrPort
-      };
-    }
-    function normalizeComparableURI(uri, opts) {
-      if (typeof uri === "string") {
-        const { normalized, malformedAuthorityOrPort } = normalizeStringWithStatus(uri, opts);
-        return malformedAuthorityOrPort ? void 0 : normalized;
-      }
-      if (typeof uri === "object") {
-        return serialize(uri, opts);
-      }
+      return parsed;
     }
     var fastUri = {
       SCHEMES,
@@ -8377,10 +8275,10 @@ var require_sql_wasm = __commonJS({
             w ? (0 === h && (h = pa()), g[q] = w(d[q])) : g[q] = d[q];
           }
           c = a(...g);
-          return c = (function(t) {
+          return c = function(t) {
             0 !== h && ra(h);
             return "string" === b ? z2(t) : "boolean" === b ? !!t : t;
-          })(c);
+          }(c);
         }, fa = (a) => {
           var b = ib(a) + 1, c = da(b);
           c && M(a, C, c, b);
@@ -12044,7 +11942,7 @@ var require_bitpacker = __commonJS({
         options.colorType
       ) !== -1;
       if (options.colorType === options.inputColorType) {
-        let bigEndian = (function() {
+        let bigEndian = function() {
           let buffer = new ArrayBuffer(2);
           new DataView(buffer).setInt16(
             0,
@@ -12053,7 +11951,7 @@ var require_bitpacker = __commonJS({
             /* littleEndian */
           );
           return new Int16Array(buffer)[0] !== 256;
-        })();
+        }();
         if (options.bitDepth === 8 || options.bitDepth === 16 && bigEndian) {
           return dataIn;
         }
@@ -17888,6 +17786,7 @@ ZodNaN.create = (params) => {
     ...processCreateParams(params)
   });
 };
+var BRAND = Symbol("zod_brand");
 var ZodBranded = class extends ZodType {
   _parse(input) {
     const { ctx } = this._processInputParams(input);
@@ -18112,6 +18011,7 @@ function $constructor(name, initializer3, params) {
   Object.defineProperty(_, "name", { value: name });
   return _;
 }
+var $brand = Symbol("zod_brand");
 var $ZodAsyncError = class extends Error {
   constructor() {
     super(`Encountered Promise during synchronous parse. Use .parseAsync() instead.`);
@@ -18258,7 +18158,7 @@ function floatSafeRemainder2(val, step) {
   const stepInt = Number.parseInt(step.toFixed(decCount).replace(".", ""));
   return valInt % stepInt / 10 ** decCount;
 }
-var EVALUATING = /* @__PURE__ */ Symbol("evaluating");
+var EVALUATING = Symbol("evaluating");
 function defineLazy(object3, key, getter) {
   let value = void 0;
   Object.defineProperty(object3, key, {
@@ -21785,6 +21685,8 @@ function en_default2() {
 
 // node_modules/zod/v4/core/registries.js
 var _a;
+var $output = Symbol("ZodOutput");
+var $input = Symbol("ZodInput");
 var $ZodRegistry = class {
   constructor() {
     this._map = /* @__PURE__ */ new WeakMap();
@@ -22586,7 +22488,7 @@ function _stringbool(Classes, _params) {
     type: "pipe",
     in: stringSchema,
     out: booleanSchema,
-    transform: ((input, payload) => {
+    transform: (input, payload) => {
       let data = input;
       if (params.case !== "sensitive")
         data = data.toLowerCase();
@@ -22605,14 +22507,14 @@ function _stringbool(Classes, _params) {
         });
         return {};
       }
-    }),
-    reverseTransform: ((input, _payload) => {
+    },
+    reverseTransform: (input, _payload) => {
       if (input === true) {
         return truthyArray[0] || "true";
       } else {
         return falsyArray[0] || "false";
       }
-    }),
+    },
     error: params.error
   });
   return codec2;
@@ -23850,10 +23752,10 @@ var ZodType2 = /* @__PURE__ */ $constructor("ZodType", (inst, def) => {
   inst.with = inst.check;
   inst.clone = (def2, params) => clone(inst, def2, params);
   inst.brand = () => inst;
-  inst.register = ((reg, meta3) => {
+  inst.register = (reg, meta3) => {
     reg.add(inst, meta3);
     return inst;
-  });
+  };
   inst.parse = (data, params) => parse2(inst, data, params, { callee: inst.parse });
   inst.safeParse = (data, params) => safeParse3(inst, data, params);
   inst.parseAsync = async (data, params) => parseAsync2(inst, data, params, { callee: inst.parseAsync });
@@ -26441,6 +26343,9 @@ var UrlElicitationRequiredError = class extends McpError {
 function isTerminal(status) {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
+
+// node_modules/zod-to-json-schema/dist/esm/Options.js
+var ignoreOverride = Symbol("Let zodToJsonSchema decide on which parser to use");
 
 // node_modules/zod-to-json-schema/dist/esm/parsers/string.js
 var ALPHA_NUMERIC = new Set("ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvxyz0123456789");
@@ -30239,10 +30144,12 @@ function startQRServer(bridge, port = 3456, initialQr, dataDir2, accountId = "de
   }
   let hasExistingAuth = false;
   try {
-    const accountsPath = join4(dataDir2, "..", "accounts.json");
-    if (existsSync2(accountsPath)) {
-      const accounts = JSON.parse(readFileSync2(accountsPath, "utf-8"));
-      hasExistingAuth = accounts.some((a) => a.id === accountId && a.phone);
+    if (dataDir2) {
+      const accountsPath = join4(dataDir2, "..", "accounts.json");
+      if (existsSync2(accountsPath)) {
+        const accounts = JSON.parse(readFileSync2(accountsPath, "utf-8"));
+        hasExistingAuth = accounts.some((a) => a.id === accountId && a.phone);
+      }
     }
   } catch {
   }

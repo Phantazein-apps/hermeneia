@@ -34,27 +34,33 @@ mkdirSync("dist", { recursive: true });
 const wasmSrc = resolve(__dirname, "node_modules/sql.js/dist/sql-wasm.wasm");
 copyFileSync(wasmSrc, resolve(__dirname, "dist/sql-wasm.wasm"));
 
-// 3. Build Go bridge binary for current platform
-const goBridgeDir = resolve(__dirname, "go-bridge");
-// Detect native arch — Node/Go may run under Rosetta on Apple Silicon
-function detectArch() {
-  if (process.platform === "darwin") {
-    try {
-      if (execSync("/usr/sbin/sysctl -n hw.optional.arm64").toString().trim() === "1") return "arm64";
-    } catch {}
+// 3. Build Go bridge binary for current platform — skippable via
+// HERMENEIA_SKIP_GO_BUILD for callers that only need the TS/store layer
+// (e.g. the demo-mode smoke test, which never spawns the Go binary at all).
+if (process.env.HERMENEIA_SKIP_GO_BUILD === "1") {
+  console.log("Built dist/index.js (+ sql-wasm.wasm) — Go bridge build skipped");
+} else {
+  const goBridgeDir = resolve(__dirname, "go-bridge");
+  // Detect native arch — Node/Go may run under Rosetta on Apple Silicon
+  function detectArch() {
+    if (process.platform === "darwin") {
+      try {
+        if (execSync("/usr/sbin/sysctl -n hw.optional.arm64").toString().trim() === "1") return "arm64";
+      } catch {}
+    }
+    return process.arch === "x64" ? "amd64" : process.arch;
   }
-  return process.arch === "x64" ? "amd64" : process.arch;
-}
-const nativeArch = detectArch();
-try {
-  console.log(`Building Go bridge (${process.platform}/${nativeArch})...`);
-  execSync("go build -o ../dist/hermeneia-bridge .", {
-    cwd: goBridgeDir,
-    stdio: "inherit",
-    env: { ...process.env, CGO_ENABLED: "1", GOARCH: nativeArch },
-  });
-  console.log("Built dist/index.js + dist/hermeneia-bridge (+ sql-wasm.wasm)");
-} catch (err) {
-  console.error("Go build failed — Node.js bundle was still created");
-  process.exit(1);
+  const nativeArch = detectArch();
+  try {
+    console.log(`Building Go bridge (${process.platform}/${nativeArch})...`);
+    execSync("go build -o ../dist/hermeneia-bridge .", {
+      cwd: goBridgeDir,
+      stdio: "inherit",
+      env: { ...process.env, CGO_ENABLED: "1", GOARCH: nativeArch },
+    });
+    console.log("Built dist/index.js + dist/hermeneia-bridge (+ sql-wasm.wasm)");
+  } catch (err) {
+    console.error("Go build failed — Node.js bundle was still created");
+    process.exit(1);
+  }
 }
