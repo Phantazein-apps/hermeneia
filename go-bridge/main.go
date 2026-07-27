@@ -69,8 +69,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Set device name to "Claude" — shown in WhatsApp > Linked Devices
-	store.DeviceProps.Os = proto.String("Claude")
+	// Device name shown in WhatsApp > Linked Devices. Overridable so hosts
+	// like Refugio can brand the linked device; applies at pairing time only
+	// (an already-linked device keeps the name it was paired with).
+	deviceName := os.Getenv("HERMENEIA_DEVICE_NAME")
+	if deviceName == "" {
+		deviceName = "Claude"
+	}
+	store.DeviceProps.Os = proto.String(deviceName)
 	store.DeviceProps.PlatformType = waCompanionReg.DeviceProps_DESKTOP.Enum()
 	store.DeviceProps.RequireFullSync = proto.Bool(true)
 
@@ -152,7 +158,14 @@ func handleEvent(rawEvt interface{}) {
 
 	case *events.Connected:
 		logf("Connected to WhatsApp!")
-		emit(Event{Type: "connected"})
+		// Include our own JID so the Node side can persist the phone number.
+		// Without it, accounts.json never records the phone and the QR setup
+		// page re-opens in the browser on every restart of a linked account.
+		connEvt := Event{Type: "connected"}
+		if client.Store.ID != nil {
+			connEvt.JID = client.Store.ID.ToNonAD().String()
+		}
+		emit(connEvt)
 
 		// Send all contacts after a brief delay (let history sync start)
 		go func() {
