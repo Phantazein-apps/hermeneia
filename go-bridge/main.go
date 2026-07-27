@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite" // pure-Go SQLite driver (CGO_ENABLED=0) — registers as "sqlite"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waCompanionReg"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -51,10 +51,17 @@ func main() {
 	// which would corrupt our JSON protocol. Errors go through our logf().
 	logger := waLog.Noop
 
+	// modernc's driver is registered as "sqlite" (not "sqlite3") and takes
+	// pragmas via the _pragma query parameter rather than mattn's
+	// _foreign_keys shorthand. whatsmeow's dbutil.ParseDialect maps any
+	// "sqlite"-prefixed engine to its SQLite dialect, so the store layer is
+	// unchanged. busy_timeout avoids "database is locked" under the bridge's
+	// concurrent reads/writes.
+	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)", dbPath)
 	container, err := sqlstore.New(
 		context.Background(),
-		"sqlite3",
-		fmt.Sprintf("file:%s?_foreign_keys=on", dbPath),
+		"sqlite",
+		dsn,
 		logger,
 	)
 	if err != nil {

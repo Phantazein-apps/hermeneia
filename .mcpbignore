@@ -2,6 +2,8 @@
 node_modules/
 src/
 go-bridge/
+test/
+assets/
 .git/
 .github/
 .claude/
@@ -12,3 +14,14 @@ esbuild.config.mjs
 README.md
 LICENSE
 .gitignore
+
+# The .mcpb ships only the two platforms Claude Desktop runs on:
+# darwin-arm64 and windows-amd64. The Linux and Intel-mac bridges are
+# published as separate release tarballs (for Refugio / build-from-source
+# users) and must not bloat the desktop bundle. The generic-named host
+# copy is redundant with the platform-specific names bridge.ts resolves
+# first, so it's excluded too.
+dist/hermeneia-bridge
+dist/hermeneia-bridge-linux-amd64
+dist/hermeneia-bridge-linux-arm64
+dist/hermeneia-bridge-darwin-amd64
