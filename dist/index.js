@@ -4328,11 +4328,11 @@ var require_core = __commonJS({
     Ajv2.ValidationError = validation_error_1.default;
     Ajv2.MissingRefError = ref_error_1.default;
     exports.default = Ajv2;
-    function checkOptions(checkOpts, options, msg, log8 = "error") {
+    function checkOptions(checkOpts, options, msg, log9 = "error") {
       for (const key in checkOpts) {
         const opt = key;
         if (opt in options)
-          this.logger[log8](`${msg}: option ${key}. ${checkOpts[opt]}`);
+          this.logger[log9](`${msg}: option ${key}. ${checkOpts[opt]}`);
       }
     }
     function getSchEnv(keyRef) {
@@ -9729,7 +9729,7 @@ var require_galois_field = __commonJS({
         EXP_TABLE[i] = EXP_TABLE[i - 255];
       }
     })();
-    exports.log = function log8(n) {
+    exports.log = function log9(n) {
       if (n < 1) throw new Error("log(" + n + ")");
       return LOG_TABLE[n];
     };
@@ -30185,24 +30185,60 @@ async function openBrowser(url2) {
 
 // src/notify.ts
 import { spawn as spawn2 } from "child_process";
-function notify(title, body) {
-  if (process.platform !== "darwin") return;
+var log5 = (msg) => console.error(`[hermeneia:notify] ${msg}`);
+function notifyMac(title, body) {
   const esc2 = (s) => s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const proc = spawn2(
+    "osascript",
+    ["-e", `display notification "${esc2(body)}" with title "${esc2(title)}"`],
+    { stdio: "ignore", detached: true }
+  );
+  proc.on("error", () => {
+  });
+  proc.unref();
+}
+function notifyWindows(title, body) {
+  const esc2 = (s) => s.replace(/'/g, "''");
+  const script = `[void][System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms');$n = New-Object System.Windows.Forms.NotifyIcon;$n.Icon = [System.Drawing.SystemIcons]::Information;$n.BalloonTipTitle = '${esc2(title)}';$n.BalloonTipText = '${esc2(body)}';$n.Visible = $true;$n.ShowBalloonTip(10000);Start-Sleep -Seconds 10;$n.Dispose()`;
+  const proc = spawn2(
+    "powershell",
+    ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script],
+    { stdio: "ignore", detached: true }
+  );
+  proc.on("error", () => {
+  });
+  proc.unref();
+}
+function notifyLinux(title, body) {
+  if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) return;
+  const proc = spawn2("notify-send", ["--app-name=Hermeneia", title, body], {
+    stdio: "ignore",
+    detached: true
+  });
+  proc.on("error", () => {
+  });
+  proc.unref();
+}
+function notify(title, body) {
+  log5(`${title} \u2014 ${body}`);
   try {
-    const proc = spawn2(
-      "osascript",
-      ["-e", `display notification "${esc2(body)}" with title "${esc2(title)}"`],
-      { stdio: "ignore", detached: true }
-    );
-    proc.on("error", () => {
-    });
-    proc.unref();
+    switch (process.platform) {
+      case "darwin":
+        notifyMac(title, body);
+        break;
+      case "win32":
+        notifyWindows(title, body);
+        break;
+      case "linux":
+        notifyLinux(title, body);
+        break;
+    }
   } catch {
   }
 }
 
 // src/bridge-manager.ts
-var log5 = (msg) => console.error(`[hermeneia:manager] ${msg}`);
+var log6 = (msg) => console.error(`[hermeneia:manager] ${msg}`);
 function isDemoMode() {
   const v = (process.env.HERMENEIA_DEMO ?? "").trim().toLowerCase();
   return v === "1" || v === "true" || v === "yes";
@@ -30216,6 +30252,11 @@ var BridgeManager = class {
   onMessage;
   watchdogTimer = null;
   shuttingDown = false;
+  // Accounts in a persistent dead state (logged out / gave up). Set when the
+  // state is entered, cleared on a successful (re)connect. Read by the MCP
+  // tools so a headless host — where desktop notifications reach nobody —
+  // still surfaces the problem in the chat instead of returning stale data.
+  degraded = /* @__PURE__ */ new Map();
   // Tracks exponential-backoff delay per account id for respawn attempts.
   respawnBackoff = /* @__PURE__ */ new Map();
   // Consecutive failed respawns without a successful "connected" event in between.
@@ -30246,7 +30287,7 @@ var BridgeManager = class {
     const defaultDir = join5(accountsDir, "default");
     if (!existsSync3(oldWhatsmeow)) return;
     if (existsSync3(join5(defaultDir, "whatsmeow.db"))) return;
-    log5("Migrating old single-account layout to accounts/default/...");
+    log6("Migrating old single-account layout to accounts/default/...");
     mkdirSync3(defaultDir, { recursive: true });
     renameSync(oldWhatsmeow, join5(defaultDir, "whatsmeow.db"));
     const oldAuth = join5(this.dataDir, "auth");
@@ -30254,14 +30295,14 @@ var BridgeManager = class {
       cpSync(oldAuth, join5(defaultDir, "auth"), { recursive: true });
     }
     this.saveAccounts([{ id: "default", name: null, phone: null }]);
-    log5("Migration complete");
+    log6("Migration complete");
   }
   /** Start all saved accounts */
   async startup() {
     this.migrateOldLayout();
     const accounts = this.loadAccounts();
     if (accounts.length === 0) {
-      log5("No accounts found, creating default account...");
+      log6("No accounts found, creating default account...");
       await this.addAccount("default", true);
       return;
     }
@@ -30274,7 +30315,7 @@ var BridgeManager = class {
     if (this.watchdogTimer) return;
     this.watchdogTimer = setInterval(() => this.watchdogTick(), this.watchdogCheckMs);
     this.watchdogTimer.unref?.();
-    log5(
+    log6(
       `Watchdog started \u2014 check every ${Math.round(this.watchdogCheckMs / 1e3)}s, timeout ${Math.round(this.watchdogTimeoutMs / 1e3)}s`
     );
   }
@@ -30289,7 +30330,7 @@ var BridgeManager = class {
         });
       }
       if (idle > this.watchdogTimeoutMs) {
-        log5(
+        log6(
           `Watchdog: no events from "${id}" for ${Math.round(idle / 1e3)}s \u2014 killing PID ${bridge.pid ?? "?"} and respawning`
         );
         bridge.forceKill("SIGKILL");
@@ -30327,7 +30368,7 @@ var BridgeManager = class {
     this.bridges.delete(id);
     const accounts = this.loadAccounts().filter((a) => a.id !== id);
     this.saveAccounts(accounts);
-    log5(`Removed account: ${id}`);
+    log6(`Removed account: ${id}`);
     return true;
   }
   async startBridge(id, name, phone) {
@@ -30341,17 +30382,25 @@ var BridgeManager = class {
       startQRServer(bridge, this.qrPort, qr, accountDir, id);
     });
     bridge.on("connected", () => {
-      log5(`Account "${id}" connected`);
+      log6(`Account "${id}" connected`);
       this.updateAccountInfo(id, bridge.displayName, bridge.phone);
       this.consecutiveFailures.delete(id);
       this.respawnBackoff.delete(id);
+      this.degraded.delete(id);
     });
     bridge.on("logged_out", () => {
-      log5(`Account "${id}" was logged out by WhatsApp \u2014 re-scan required`);
+      log6(`Account "${id}" was logged out by WhatsApp \u2014 re-scan required`);
       this.clearAuthState(id);
+      const setupUrl = `http://localhost:${this.qrPort}/setup/${id}`;
+      this.degraded.set(id, {
+        id,
+        reason: "logged_out",
+        message: `WhatsApp logged out account "${id}". Open ${setupUrl} on the host running Hermeneia and re-scan the QR code to reconnect.`,
+        setupUrl
+      });
       notify(
         "WhatsApp session expired",
-        `Account "${id}" was logged out. Open http://localhost:${this.qrPort}/setup/${id} to re-scan.`
+        `Account "${id}" was logged out. Open ${setupUrl} to re-scan.`
       );
       bridge.forceKill("SIGTERM");
     });
@@ -30362,7 +30411,7 @@ var BridgeManager = class {
       this.onMessage?.(id, msg);
     });
     bridge.on("error", (err) => {
-      log5(`Bridge error (${id}): ${err.message}`);
+      log6(`Bridge error (${id}): ${err.message}`);
     });
     bridge.on("exit", () => {
       if (this.shuttingDown) return;
@@ -30371,9 +30420,9 @@ var BridgeManager = class {
     this.bridges.set(id, bridge);
     try {
       await bridge.start();
-      log5(`Started bridge for account: ${id}`);
+      log6(`Started bridge for account: ${id}`);
     } catch (err) {
-      log5(`Failed to start bridge for account "${id}": ${err.message}`);
+      log6(`Failed to start bridge for account "${id}": ${err.message}`);
       this.bridges.delete(id);
       if (!this.shuttingDown) this.scheduleRespawn(id, name, phone);
     }
@@ -30383,9 +30432,18 @@ var BridgeManager = class {
     const failures = (this.consecutiveFailures.get(id) ?? 0) + 1;
     this.consecutiveFailures.set(id, failures);
     if (failures > this.respawnCap) {
-      log5(
+      log6(
         `Giving up on "${id}" after ${failures - 1} consecutive respawn failures. Check logs (data/logs/bridge-${id}.log), then restart Hermeneia to retry.`
       );
+      const setupUrl = `http://localhost:${this.qrPort}/setup/${id}`;
+      if (!this.degraded.has(id)) {
+        this.degraded.set(id, {
+          id,
+          reason: "gave_up",
+          message: `WhatsApp account "${id}" won't stay connected (${failures - 1} failed retries). It likely needs a re-scan: open ${setupUrl} on the host, or check data/logs/bridge-${id}.log, then restart Hermeneia.`,
+          setupUrl
+        });
+      }
       notify(
         "Hermeneia: WhatsApp bridge failed",
         `Account "${id}" won't stay connected (${failures - 1} retries). Likely needs a re-scan \u2014 see check_status.`
@@ -30396,7 +30454,7 @@ var BridgeManager = class {
     const prev = this.respawnBackoff.get(id) ?? 0;
     const delay = prev === 0 ? 5e3 : Math.min(prev * 2, 3e4);
     this.respawnBackoff.set(id, delay);
-    log5(
+    log6(
       `Scheduling respawn of "${id}" in ${Math.round(delay / 1e3)}s (attempt ${failures}/${this.respawnCap})`
     );
     setTimeout(() => {
@@ -30406,7 +30464,7 @@ var BridgeManager = class {
       const p = saved?.phone ?? phone;
       this.bridges.delete(id);
       this.startBridge(id, n, p).catch((err) => {
-        log5(`Respawn of "${id}" failed: ${err?.message ?? err}`);
+        log6(`Respawn of "${id}" failed: ${err?.message ?? err}`);
       });
     }, delay).unref?.();
   }
@@ -30440,6 +30498,33 @@ var BridgeManager = class {
   }
   getConnectedIds() {
     return Array.from(this.bridges.entries()).filter(([_, b]) => b.isConnected).map(([id]) => id);
+  }
+  /** Accounts in a persistent dead state that needs the user to act. */
+  getDegradedAccounts() {
+    return Array.from(this.degraded.values());
+  }
+  /** The dead-state entry for a specific account, if any. */
+  getDegraded(accountId) {
+    return this.degraded.get(accountId);
+  }
+  /** Actionable message if the given target is in a dead state and would
+   *  otherwise return stale/empty data. With an explicit accountId, checks
+   *  just that account. With none, only fires when EVERY known account is
+   *  degraded (so a healthy account in a multi-account setup still serves
+   *  reads). Returns null when there's nothing to warn about — including
+   *  always in demo mode, which never degrades. */
+  degradedWarning(accountId) {
+    if (accountId) {
+      return this.degraded.get(accountId)?.message ?? null;
+    }
+    if (this.degraded.size === 0) return null;
+    const known = /* @__PURE__ */ new Set([
+      ...this.bridges.keys(),
+      ...this.loadAccounts().map((a) => a.id)
+    ]);
+    const allDegraded = [...known].length > 0 && [...known].every((id) => this.degraded.has(id));
+    if (!allDegraded) return null;
+    return this.getDegradedAccounts().map((d) => d.message).join(" ");
   }
   /** Get bridge for sending. Errors if ambiguous (>1 connected, no id specified). */
   resolveForSend(accountId) {
@@ -30481,7 +30566,7 @@ var BridgeManager = class {
       this.watchdogTimer = null;
     }
     for (const [id, bridge] of this.bridges) {
-      log5(`Stopping bridge: ${id}`);
+      log6(`Stopping bridge: ${id}`);
       await bridge.stop();
     }
     this.bridges.clear();
@@ -30523,6 +30608,16 @@ function registerTools(server2, manager) {
     async (request) => {
       const { name, arguments: args } = request.params;
       const accountId = args?.account;
+      const DEAD_STATE_EXEMPT = /* @__PURE__ */ new Set([
+        "check_status",
+        "list_accounts",
+        "add_account",
+        "remove_account"
+      ]);
+      if (!DEAD_STATE_EXEMPT.has(name)) {
+        const warning = manager.degradedWarning(accountId);
+        if (warning) return text(`\u26A0\uFE0F ${warning}`);
+      }
       switch (name) {
         // ── Account management ───────────────────────────────────────
         case "list_accounts": {
@@ -30552,6 +30647,7 @@ function registerTools(server2, manager) {
         case "check_status": {
           const accounts = manager.getAllAccountInfo();
           const connected = accounts.filter((a) => a.connected);
+          const degraded = manager.getDegradedAccounts();
           if (connected.length > 0) {
             const diagnostics = accountId ? [getStoreDiagnostics(accountId)] : accounts.map((a) => getStoreDiagnostics(a.id));
             const demoMode = isDemoMode();
@@ -30559,7 +30655,16 @@ function registerTools(server2, manager) {
               status: "connected",
               message: demoMode ? "DEMO MODE \u2014 fixture data, not connected to WhatsApp." : `${connected.length} account(s) connected.`,
               accounts,
-              store: diagnostics
+              store: diagnostics,
+              ...degraded.length > 0 ? { needs_attention: degraded } : {}
+            });
+          }
+          if (degraded.length > 0) {
+            return json2({
+              status: "needs_attention",
+              message: degraded.map((d) => d.message).join(" "),
+              needs_attention: degraded,
+              accounts
             });
           }
           const pending = accounts.find((a) => !a.connected);
@@ -31191,7 +31296,7 @@ function guessMime(filePath) {
 // src/lockfile.ts
 import { readFileSync as readFileSync5, writeFileSync as writeFileSync3, unlinkSync, existsSync as existsSync4, mkdirSync as mkdirSync4 } from "fs";
 import { join as join6 } from "path";
-var log6 = (msg) => console.error(`[hermeneia:lock] ${msg}`);
+var log7 = (msg) => console.error(`[hermeneia:lock] ${msg}`);
 var lockPath = null;
 function acquireLock(dataDir2) {
   mkdirSync4(dataDir2, { recursive: true });
@@ -31200,13 +31305,13 @@ function acquireLock(dataDir2) {
     const raw = readFileSync5(lockPath, "utf-8").trim();
     const pid = parseInt(raw, 10);
     if (pid > 0 && isAlive(pid)) {
-      log6(`Another Hermeneia is already running (PID ${pid}) \u2014 exiting cleanly.`);
+      log7(`Another Hermeneia is already running (PID ${pid}) \u2014 exiting cleanly.`);
       return false;
     }
-    log6(`Stale lock (PID ${raw}) \u2014 taking over.`);
+    log7(`Stale lock (PID ${raw}) \u2014 taking over.`);
   }
   writeFileSync3(lockPath, String(process.pid));
-  log6(`Lock acquired (PID ${process.pid})`);
+  log7(`Lock acquired (PID ${process.pid})`);
   const release = () => {
     try {
       if (lockPath && existsSync4(lockPath)) {
@@ -31240,7 +31345,7 @@ function isAlive(pid) {
 
 // src/index.ts
 var __dirname6 = dirname4(fileURLToPath5(import.meta.url));
-var log7 = (msg) => console.error(`[hermeneia] ${msg}`);
+var log8 = (msg) => console.error(`[hermeneia] ${msg}`);
 function getDataDir() {
   if (process.env.HERMENEIA_DATA_DIR) return process.env.HERMENEIA_DATA_DIR;
   if (process.env.WHATSAPP_DATA_DIR) return process.env.WHATSAPP_DATA_DIR;
@@ -31257,29 +31362,29 @@ function migrateOldDataDir() {
   if (oldDir === dataDir) return;
   if (!existsSync5(oldDir)) return;
   if (existsSync5(join7(dataDir, "accounts.json"))) return;
-  log7(`Migrating data from ${oldDir} to ${dataDir}`);
+  log8(`Migrating data from ${oldDir} to ${dataDir}`);
   mkdirSync5(dataDir, { recursive: true });
   cpSync2(oldDir, dataDir, { recursive: true });
-  log7("Data migration complete");
+  log8("Data migration complete");
 }
 var qrPort = parseInt(process.env.HERMENEIA_QR_PORT ?? "3456", 10);
 async function main() {
-  log7("Starting Hermeneia...");
+  log8("Starting Hermeneia...");
   migrateOldDataDir();
-  log7(`Data directory: ${dataDir}`);
+  log8(`Data directory: ${dataDir}`);
   if (!acquireLock(dataDir)) {
     await new Promise((resolve) => setTimeout(resolve, 2e3));
     process.exit(0);
   }
   await initStore(dataDir);
-  log7("Message store ready");
+  log8("Message store ready");
   const mirrorInfo = initMirror();
-  log7(`Epistole mirror: ${mirrorInfo.info}`);
+  log8(`Epistole mirror: ${mirrorInfo.info}`);
   const manager = new BridgeManager(dataDir, qrPort);
   manager.setMessageHandler((accountId, msg) => {
     const dir = msg.isFromMe ? "\u2192" : "\u2190";
     const preview = msg.content?.substring(0, 60) ?? "[media]";
-    log7(`[${accountId}] ${dir} ${msg.sender}: ${preview}`);
+    log8(`[${accountId}] ${dir} ${msg.sender}: ${preview}`);
   });
   await manager.startup();
   const mcpServer = new Server(
@@ -31297,9 +31402,9 @@ async function main() {
   registerTools(mcpServer, manager);
   const transport = new StdioServerTransport();
   await mcpServer.connect(transport);
-  log7("MCP server running on stdio");
+  log8("MCP server running on stdio");
   const shutdown = async () => {
-    log7("Shutting down...");
+    log8("Shutting down...");
     stopQRServer();
     await manager.stopAll();
     await mcpServer.close();

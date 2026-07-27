@@ -44,6 +44,23 @@ export function registerTools(server: Server, manager: BridgeManager): void {
       const { name, arguments: args } = request.params;
       const accountId = args?.account as string | undefined;
 
+      // In-band dead-session alert. On a headless host (e.g. Refugio) a
+      // desktop notification reaches nobody, so a logged-out or given-up
+      // session would otherwise make read tools silently return stale/empty
+      // data and send tools quietly fail. Instead, surface the actionable
+      // message in the tool result itself. Status/account-management tools
+      // are exempt — they're how the user diagnoses and fixes the state.
+      const DEAD_STATE_EXEMPT = new Set([
+        "check_status",
+        "list_accounts",
+        "add_account",
+        "remove_account",
+      ]);
+      if (!DEAD_STATE_EXEMPT.has(name)) {
+        const warning = manager.degradedWarning(accountId);
+        if (warning) return text(`⚠️ ${warning}`);
+      }
+
       switch (name) {
         // ── Account management ───────────────────────────────────────
 
@@ -81,6 +98,7 @@ export function registerTools(server: Server, manager: BridgeManager): void {
         case "check_status": {
           const accounts = manager.getAllAccountInfo();
           const connected = accounts.filter((a) => a.connected);
+          const degraded = manager.getDegradedAccounts();
 
           if (connected.length > 0) {
             const diagnostics = accountId
@@ -94,6 +112,18 @@ export function registerTools(server: Server, manager: BridgeManager): void {
                 : `${connected.length} account(s) connected.`,
               accounts,
               store: diagnostics,
+              ...(degraded.length > 0 ? { needs_attention: degraded } : {}),
+            });
+          }
+
+          // Persistent dead state (logged out / gave up) — the most
+          // actionable thing to report.
+          if (degraded.length > 0) {
+            return json({
+              status: "needs_attention",
+              message: degraded.map((d) => d.message).join(" "),
+              needs_attention: degraded,
+              accounts,
             });
           }
 
