@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/banner.svg" alt="Hermeneia — WhatsApp for Claude: drag, scan, chat" width="100%">
+<img src="assets/banner.svg" alt="Hermeneia — WhatsApp for your AI: drag, scan, chat" width="100%">
 
 <p>
   <a href="https://github.com/Phantazein-apps/hermeneia/releases/latest"><img src="https://img.shields.io/github/v/release/Phantazein-apps/hermeneia?style=flat-square&labelColor=000000&color=ff0018&label=release" alt="Latest release"></a>
