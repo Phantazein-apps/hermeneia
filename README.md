@@ -25,7 +25,7 @@ Designed for **local AI** — pair it with [Refugio](https://github.com/Phantaze
 
 You need three things:
 
-- 🖥 **A Mac with an Apple chip** — click the ** Apple menu → About This Mac**. If "Chip" says Apple M1, M2, M3, or M4, you're good. (Windows and older Intel Macs aren't supported yet.)
+- 🖥 **A Mac with an Apple chip** — click the ** Apple menu → About This Mac**. If "Chip" says Apple M1, M2, M3, or M4, you're good. (The drag-to-install app below is Apple Silicon for now. On **Linux** — including a Refugio host — and other platforms, run Hermeneia from source or a prebuilt bridge binary; see [Works with](#works-with).)
 - 💬 **The Claude app for Mac** — free download from [claude.ai/download](https://claude.ai/download) if you don't have it.
 - 📱 **Your phone with WhatsApp** on it.
 
@@ -82,7 +82,7 @@ A note on how it works: WhatsApp doesn't offer an official way for personal acco
 
 **"It stopped seeing new messages."** Quit the Claude app fully and reopen it. Hermeneia also watches its own connection and restarts it automatically if WhatsApp goes quiet.
 
-**"Can I use it on Windows / just my phone / an Intel Mac?"** Not yet — it currently needs a Mac with an Apple chip. Cross-platform support is on the roadmap.
+**"Can I use it on Windows / Linux / just my phone / an Intel Mac?"** The one-click Claude Desktop install is Apple Silicon for now. But the underlying bridge is pure Go and builds for macOS (Apple Silicon + Intel), Linux (x64 + arm64), and Windows — so on those platforms you can run Hermeneia from source or a prebuilt bridge binary with Claude Desktop, [Refugio](https://github.com/Phantazein-apps/refugio), Codex, or any MCP client. See [Works with](#works-with). (Just your phone alone, no — Hermeneia needs a computer to run on.)
 
 **"Does this work with more than one WhatsApp number?"** Yes — see below.
 
@@ -114,8 +114,10 @@ Hermeneia is a standard stdio MCP server — any client that can spawn an MCP se
 git clone https://github.com/Phantazein-apps/hermeneia.git
 cd hermeneia
 npm install
-npm run build   # produces dist/index.js
+npm run build   # bundles dist/index.js + the Go bridge for your platform
 ```
+
+The Go bridge is pure Go (no CGO), so `npm run build` cross-compiles cleanly on macOS (Apple Silicon + Intel), Linux (x64 + arm64), and Windows. Don't want a Go toolchain? Every [release](https://github.com/Phantazein-apps/hermeneia/releases/latest) also ships standalone `hermeneia-bridge-<os>-<arch>` binaries as `.tar.gz` assets — download the one for your platform and drop it next to `dist/index.js`.
 
 ### Refugio (local AI — recommended)
 
@@ -213,7 +215,7 @@ Origin chain: [`lharries/whatsapp-mcp`](https://github.com/lharries/whatsapp-mcp
 
 ### Trade-offs
 
-- macOS Apple Silicon only for now. Upstream runs anywhere Python + Go runs.
+- The one-click `.mcpb` install targets macOS Apple Silicon. The bridge itself is cross-platform (pure Go, no CGO — macOS arm64/amd64, Linux amd64/arm64, Windows amd64), so other platforms run from source or a prebuilt bridge binary. Windows binaries are built and CI-tested at the TS layer, but the one-click Windows install stays gated until a full manual QR smoke test lands.
 - No webhook forwarding for incoming messages (upstream `verygoodplugins` has this).
 - No semantic search over message history (IMAP-search-equivalent only).
 
@@ -345,7 +347,8 @@ HERMENEIA_RESPAWN_CAP=5               # give up after N consecutive failed respa
 ### Session reliability
 
 - **Per-account bridge logs** are written to `<dataDir>/logs/bridge-<accountId>.log` (captures the Go/whatsmeow stderr, invaluable for diagnosing silent session drops).
-- When WhatsApp revokes a linked device, Hermeneia catches the `logged_out` event, clears the saved phone, kills the bridge so whatsmeow re-initialises and emits a fresh QR, and fires a **macOS desktop notification** pointing at the setup URL.
+- When WhatsApp revokes a linked device, Hermeneia catches the `logged_out` event, clears the saved phone, kills the bridge so whatsmeow re-initialises and emits a fresh QR, and fires a **desktop notification** (osascript on macOS, a PowerShell toast on Windows, `notify-send` on Linux) pointing at the setup URL.
+- On a **headless host** (e.g. Refugio) a desktop notification reaches nobody, so a logged-out or given-up session is also surfaced *in-band*: the affected tool calls return an actionable "re-scan at `<setup URL>`" message instead of silently returning stale data, and `check_status` reports a `needs_attention` block. Every alert is written to the log too — the one channel that exists everywhere.
 - If a bridge fails to stay connected after `HERMENEIA_RESPAWN_CAP` consecutive respawn attempts, Hermeneia stops retrying and notifies you — respawning a genuinely revoked session is futile.
 
 ## Development
