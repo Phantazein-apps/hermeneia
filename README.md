@@ -60,6 +60,10 @@ Give it a few minutes on first connect while it syncs your message history (up t
 
 Claude will always show you a message before sending it, and asks which account to use if you've connected more than one.
 
+### Try it without connecting WhatsApp
+
+Want to see what Hermeneia can do before scanning a QR code? Turn on **Demo mode** in the extension's settings (or set `HERMENEIA_DEMO=1`) and Claude gets a full set of realistic sample contacts, chats, and messages — no WhatsApp account, no real data, nothing sent anywhere.
+
 ## Is this safe?
 
 **Your messages never leave your computer.** Everything is stored in a local database on your Mac. Hermeneia only talks to WhatsApp's own servers — the exact same ones the WhatsApp app on your phone talks to. No cloud service, no telemetry, no account to create, and the entire source code is public in this repository.
