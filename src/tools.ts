@@ -11,6 +11,7 @@ import {
   CallToolRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { BridgeManager } from "./bridge-manager.js";
+import { isDemoMode } from "./bridge-manager.js";
 import {
   searchContacts,
   listMessages,
@@ -85,9 +86,12 @@ export function registerTools(server: Server, manager: BridgeManager): void {
             const diagnostics = accountId
               ? [getStoreDiagnostics(accountId)]
               : accounts.map((a) => getStoreDiagnostics(a.id));
+            const demoMode = isDemoMode();
             return json({
               status: "connected",
-              message: `${connected.length} account(s) connected.`,
+              message: demoMode
+                ? "DEMO MODE — fixture data, not connected to WhatsApp."
+                : `${connected.length} account(s) connected.`,
               accounts,
               store: diagnostics,
             });

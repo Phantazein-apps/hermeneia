@@ -6,12 +6,28 @@
 import { mkdirSync, existsSync, readFileSync, writeFileSync, renameSync, cpSync } from "fs";
 import { join } from "path";
 import { WhatsAppBridge } from "./bridge.js";
+import { DemoBridge } from "./demo-bridge.js";
 import { startQRServer, stopQRServer } from "./qr-server.js";
 import { isMirrorEnabled, mirrorHeartbeat, flushAll as flushMirror } from "./mirror.js";
 import { notify } from "./notify.js";
 import type { AccountInfo } from "./types.js";
 
 const log = (msg: string) => console.error(`[hermeneia:manager] ${msg}`);
+
+// Accept a few truthy spellings since the Claude Desktop extension setting
+// is a boolean user_config value substituted into this env var as a string
+// — "1" for the documented env-var usage, "true" in case the host
+// serializes booleans that way instead.
+export function isDemoMode(): boolean {
+  const v = (process.env.HERMENEIA_DEMO ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
+
+const DEMO_MODE = isDemoMode();
+// Same public surface as WhatsAppBridge (constructor, start(), send/command
+// methods, EventEmitter events) — see demo-bridge.ts. Selecting the class
+// here is the only place demo mode changes bridge-manager's behavior.
+const Bridge: typeof WhatsAppBridge = DEMO_MODE ? (DemoBridge as unknown as typeof WhatsAppBridge) : WhatsAppBridge;
 
 interface AccountEntry {
   id: string;
@@ -88,7 +104,7 @@ export class BridgeManager {
     if (accounts.length === 0) {
       // First run — create default account
       log("No accounts found, creating default account...");
-      await this.addAccount("default");
+      await this.addAccount("default", true);
       return;
     }
 
@@ -135,7 +151,15 @@ export class BridgeManager {
   }
 
   /** Add and start a new account */
-  async addAccount(id: string): Promise<{ setupUrl: string }> {
+  /** bootstrap=true is the internal first-run call from startup(), which must
+   *  still be allowed to create demo mode's own single fixture account. */
+  async addAccount(id: string, bootstrap = false): Promise<{ setupUrl: string }> {
+    if (DEMO_MODE && !bootstrap) {
+      throw new Error(
+        "Demo mode only supports a single fixture account. Unset HERMENEIA_DEMO " +
+          "(or turn off the Demo mode setting) and restart to connect a real WhatsApp account."
+      );
+    }
     if (this.bridges.has(id)) {
       throw new Error(`Account "${id}" already exists`);
     }
@@ -176,7 +200,7 @@ export class BridgeManager {
     const accountDir = join(this.dataDir, "accounts", id);
     mkdirSync(accountDir, { recursive: true });
 
-    const bridge = new WhatsAppBridge(accountDir, id, this.logDirPath());
+    const bridge = new Bridge(accountDir, id, this.logDirPath());
     bridge.setQrPort(this.qrPort);
     bridge.displayName = name;
     bridge.phone = phone;
