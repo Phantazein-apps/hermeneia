@@ -5,11 +5,13 @@
 <p>
   <a href="https://github.com/Phantazein-apps/hermeneia/releases/latest"><img src="https://img.shields.io/github/v/release/Phantazein-apps/hermeneia?style=flat-square&labelColor=000000&color=ff0018&label=release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-f4f2ee?style=flat-square&labelColor=000000&logo=apple&logoColor=white" alt="macOS Apple Silicon">
-  <img src="https://img.shields.io/badge/Claude-MCP-ff0018?style=flat-square&labelColor=000000" alt="Claude MCP">
+  <img src="https://img.shields.io/badge/MCP-any%20client-ff0018?style=flat-square&labelColor=000000" alt="MCP — any client">
   <img src="https://img.shields.io/badge/license-MIT-a8a5a0?style=flat-square&labelColor=000000" alt="MIT license">
 </p>
 
-**WhatsApp bridge for Claude. Drag to install, scan a QR code, chat.**
+**Let your AI read and send your WhatsApp messages. Install in 2 minutes — no technical skills needed.**
+
+Designed for **local AI** — pair it with [Refugio](https://github.com/Phantazein-apps/refugio) to talk to your WhatsApp through a fully self-hosted model. It also works with **Claude Desktop**, **OpenAI Codex**, and any other MCP-capable app.
 
 <sub>**ἑρμηνεία** — *interpretation, translation between worlds* · from Hermes, messenger of the gods<br>Part of the <a href="https://phantazein.com">Phantazein</a> toolkit</sub>
 
@@ -17,92 +19,164 @@
 
 ---
 
-<table>
-<tr>
-<td><a href="#install">📦 Install</a></td>
-<td><a href="#connect-whatsapp">🔗 Connect</a></td>
-<td><a href="#what-claude-can-do">✨ Capabilities</a></td>
-<td><a href="#multiple-whatsapp-accounts">👥 Multi-account</a></td>
-</tr>
-<tr>
-<td><a href="#privacy">🔒 Privacy</a></td>
-<td><a href="#architecture">🏗 Architecture</a></td>
-<td><a href="#how-hermeneia-compares">⚖️ Comparison</a></td>
-<td><a href="#development">🛠 Development</a></td>
-</tr>
-</table>
+> 🚧 **Work in progress.** Hermeneia is under active development. It works — thousands of messages flow through it daily — but expect the occasional rough edge. The Claude Desktop setup below is the most polished path today.
 
-## Install
+## Get started in 2 minutes
 
-Download `Hermeneia.mcpb` from [Releases](https://github.com/Phantazein-apps/hermeneia/releases/latest) and drag it into Claude Desktop.
+You need three things:
 
-That's it. No terminal, no Python, no Go, no config files.
+- 🖥 **A Mac with an Apple chip** — click the ** Apple menu → About This Mac**. If "Chip" says Apple M1, M2, M3, or M4, you're good. (Windows and older Intel Macs aren't supported yet.)
+- 💬 **The Claude app for Mac** — free download from [claude.ai/download](https://claude.ai/download) if you don't have it.
+- 📱 **Your phone with WhatsApp** on it.
 
-> **Platform:** macOS (Apple Silicon) only for now.
+### Step 1 — Download
 
-## Connect WhatsApp
+Download the latest `hermeneia-x.x.x.mcpb` file from the [**Releases page**](https://github.com/Phantazein-apps/hermeneia/releases/latest) (it's under "Assets").
 
-1. Ask Claude: **"check my WhatsApp status"**
-2. A browser page opens with a QR code
-3. Open WhatsApp on your phone → Settings → Linked Devices → Link a Device
-4. Scan the code
-5. Done — Claude can now read and send your messages
+### Step 2 — Drag it into Claude
 
-The session persists across restarts. You only scan once.
+Open the Claude app and **drag the downloaded file onto the Claude window**. Claude will ask if you want to install it.
 
-## What Claude can do
+> **You'll see a warning** that says the extension gets "access to everything on your computer" and "has not been verified by Anthropic." This message appears for *every* third-party add-on — it's Anthropic's standard notice, not something specific to Hermeneia. Everything Hermeneia does stays on your Mac (see [Is this safe?](#is-this-safe) below), and all the code is public on this page for anyone to inspect. Click **Install**.
 
-- **Read messages** — search, filter by date/contact/chat, get context around any message
-- **Unread summary** — "summarize my unread WhatsApp" works out of the box
-- **Send messages** — text, images, videos, documents, voice notes
-- **Download and view images** — Claude can see photos from your chats, not just file paths
-- **Browse contacts** — search by name or phone number
-- **Browse chats** — list all conversations with unread counts; archived chats hidden by default
-- **Community awareness** — chats show which WhatsApp community they belong to
-- **Deep history** — syncs up to 3 years of message history (1000 messages per chat) on first connect
+### Step 3 — Connect your WhatsApp
 
-## Multiple WhatsApp Accounts
+1. In Claude, type: **"check my WhatsApp status"**
+2. A page opens in your browser showing a **QR code**
+3. On your phone, open WhatsApp → **Settings** → **Linked Devices** → **Link a Device**
+4. Point your phone's camera at the QR code
 
-Connect as many WhatsApp numbers as you want (personal, work, family, etc.):
+That's it. You only do this once — the connection survives restarts.
+
+### Step 4 — Try it
+
+Give it a few minutes on first connect while it syncs your message history (up to 3 years). Then just talk to Claude:
+
+- *"Summarize my unread WhatsApp messages"*
+- *"What did Mom send me this week?"*
+- *"Find the message where someone shared an Airbnb link"*
+- *"Send María a WhatsApp saying I'm running 10 minutes late"*
+- *"Show me the photo Tyler sent yesterday"*
+
+Claude will always show you a message before sending it, and asks which account to use if you've connected more than one.
+
+## Is this safe?
+
+**Your messages never leave your computer.** Everything is stored in a local database on your Mac. Hermeneia only talks to WhatsApp's own servers — the exact same ones the WhatsApp app on your phone talks to. No cloud service, no telemetry, no account to create, and the entire source code is public in this repository.
+
+On your phone, Hermeneia shows up as a linked device called **"Claude"** (WhatsApp → Settings → Linked Devices) — the same mechanism as WhatsApp Web or WhatsApp on a second computer.
+
+**To disconnect at any time:** on your phone, WhatsApp → Settings → Linked Devices → tap **Claude** → **Log Out**. To remove Hermeneia completely, delete the extension in the Claude app (Settings → Extensions).
+
+A note on how it works: WhatsApp doesn't offer an official way for personal accounts to connect outside apps, so Hermeneia — like every WhatsApp tool of this kind — uses the same protocol WhatsApp Web uses. That's also why it can't appear in Anthropic's "verified" directory, which requires an official login flow that WhatsApp doesn't provide.
+
+## Common questions
+
+**"It can't find an old message I know exists."** WhatsApp only hands linked devices part of your history — active chats get years of messages, quiet ones sometimes get none. Fix: open that chat in WhatsApp *on your phone* and leave it on screen for a minute or two; WhatsApp will usually push its history over. New messages always come through reliably.
+
+**"The QR page didn't open."** Just ask Claude again: *"check my WhatsApp status."*
+
+**"It stopped seeing new messages."** Quit the Claude app fully and reopen it. Hermeneia also watches its own connection and restarts it automatically if WhatsApp goes quiet.
+
+**"Can I use it on Windows / just my phone / an Intel Mac?"** Not yet — it currently needs a Mac with an Apple chip. Cross-platform support is on the roadmap.
+
+**"Does this work with more than one WhatsApp number?"** Yes — see below.
+
+## Multiple WhatsApp accounts
+
+Connect as many WhatsApp numbers as you want (personal, work, family…):
 
 1. Ask Claude: **"add another WhatsApp account called work"**
 2. A new QR page opens — scan it with the other phone
-3. Done — Claude can now search and send across all your accounts
+3. Done — searches now cover all your accounts, and Claude asks which one to send from
 
-All accounts reconnect automatically on restart. When searching messages, Claude searches all accounts by default. When sending, Claude asks which account to use if you have more than one.
+All accounts reconnect automatically on restart.
 
-**Tools:** `list_accounts`, `add_account`, `remove_account`
+---
 
-## About the security warning
+<div align="center">
 
-When you install Hermeneia, Claude Desktop shows a warning:
+**Everything below this line is for technical users** — using Hermeneia with other AI apps, how it works inside, and how to build it from source. If you just wanted WhatsApp in Claude, you're done. 🎉
 
-> *"Installing will grant this extension access to everything on your computer. Any developer information shown has not been verified by Anthropic."*
+</div>
 
-**This warning appears for every third-party extension** — it is not specific to Hermeneia. Anthropic shows it because they haven't reviewed the code. This is the same model as browser extensions, VS Code extensions, or npm packages.
+---
 
-WhatsApp does not offer a public API for personal accounts. Any tool that connects your personal WhatsApp — whether it's WhatsApp Web, a bridge, or an automation tool — uses the same reverse-engineered protocol. This means it cannot go through an official OAuth flow, which is what Anthropic's verified directory would require.
+## Works with
 
-**Until WhatsApp releases an official personal messaging API, this is the only way to build a WhatsApp integration for Claude.** The code is fully open-source — you can read every line at [github.com/Phantazein-apps/hermeneia](https://github.com/Phantazein-apps/hermeneia).
+Hermeneia is a standard stdio MCP server — any client that can spawn an MCP server can use it. For clients other than Claude Desktop, build once and point your client at `dist/index.js`:
 
-## Privacy
+```bash
+git clone https://github.com/Phantazein-apps/hermeneia.git
+cd hermeneia
+npm install
+npm run build   # produces dist/index.js
+```
 
-All data stays on your computer. Messages are stored in a local SQLite database under `data/`. Nothing is sent to any server except WhatsApp's own servers (the same servers WhatsApp Web connects to). No telemetry, no cloud, no accounts.
+### Refugio (local AI — recommended)
+
+[Refugio](https://github.com/Phantazein-apps/refugio) runs a fully self-hosted stack (Ollama / LM Studio + Open WebUI) and exposes MCP tools through MCPO. Point Refugio at your built Hermeneia checkout:
+
+```bash
+# ~/.refugio.env
+HERMENEIA_DIR=/path/to/hermeneia
+```
+
+Refugio's supervisor picks it up and your WhatsApp tools appear in Open WebUI alongside the other connectors. *(Refugio-side support is in progress — until it lands, add a stdio entry to Refugio's `mcpo-config.json` manually: `{"command": "node", "args": ["/path/to/hermeneia/dist/index.js"]}`.)*
+
+> **Tip for local models:** Hermeneia exposes 17 tools. Larger tool-calling-capable models handle this well; small models may struggle with tool selection.
+
+### OpenAI Codex
+
+```toml
+# ~/.codex/config.toml
+[mcp_servers.whatsapp]
+command = "node"
+args = ["/path/to/hermeneia/dist/index.js"]
+```
+
+### Any other MCP client
+
+Generic MCP server config (Claude Code, Cursor, Windsurf, etc.):
+
+```json
+{
+  "mcpServers": {
+    "whatsapp": {
+      "command": "node",
+      "args": ["/path/to/hermeneia/dist/index.js"]
+    }
+  }
+}
+```
+
+## Full capability list
+
+- **Read messages** — search, filter by date/contact/chat, get context around any message
+- **Unread summary** — using native WhatsApp unread counts; archived chats excluded by default
+- **Send messages** — text, images, videos, documents, voice notes
+- **Download and view images** — inline, not just file paths
+- **Browse contacts** — search by name or phone number; full contact resolution (phone numbers, LIDs, push names, verified names)
+- **Browse chats** — all conversations with unread counts; community/parent-group awareness
+- **Deep history** — syncs up to 3 years of message history (1,000 messages per chat) on first connect
+- **Multi-account** — `list_accounts`, `add_account`, `remove_account`
+
+17 MCP tools in total.
 
 ## Architecture
 
 A Go subprocess handles the WhatsApp connection; a Node.js process runs the MCP server and SQLite store.
 
 1. **Go bridge** — [whatsmeow](https://github.com/tulir/whatsmeow) handles the WhatsApp Web protocol, QR auth, history sync, and message sending
-2. **MCP server** — [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/typescript-sdk) exposes 17 tools to Claude via stdio
+2. **MCP server** — [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/typescript-sdk) exposes 17 tools via stdio
 3. **SQLite** — [sql.js](https://github.com/sql-js/sql.js) stores messages, chats, and contacts locally
 4. **Setup page** — local HTTP server for QR code display (only during auth)
 
 ```
-Claude Desktop ←→ MCP (stdio) ←→ Node.js ←→ Go bridge ←→ WhatsApp
-                                    ↕
-                                 SQLite
-                              (local data)
+MCP client (Claude / Refugio / Codex / …) ←→ MCP (stdio) ←→ Node.js ←→ Go bridge ←→ WhatsApp
+                                                              ↕
+                                                           SQLite
+                                                        (local data)
 ```
 
 ## How Hermeneia compares
@@ -115,9 +189,9 @@ Origin chain: [`lharries/whatsapp-mcp`](https://github.com/lharries/whatsapp-mcp
 
 - **TypeScript MCP layer** (vs Python upstream). Same Go/whatsmeow bridge, but ships as a single Node bundle with no Python toolchain.
 - **`.mcpb` drag-and-drop install** vs `git clone` + `uv` setup. Drag onto Claude Desktop, scan QR, done.
-- **Multi-account** - connect personal, work, family, business numbers in parallel; Claude searches across all by default. Upstream is single-account.
+- **Multi-account** - connect personal, work, family, business numbers in parallel; searches span all accounts by default. Upstream is single-account.
 - **Deep history sync on first connect** (3 years / 1,000 msgs per chat). Upstream syncs forward from connection time only.
-- **Inline image display** - `download_media` returns the image so Claude sees photos. Upstream returns file paths.
+- **Inline image display** - `download_media` returns the image so your assistant sees photos. Upstream returns file paths.
 - **Unread tracking + filtering** using native WhatsApp counts. Upstream has no unread state.
 - **Archived chat detection** (excluded by default).
 - **Community / parent-group awareness** - chats know which Community they belong to.
@@ -184,7 +258,7 @@ On next start, you should see `[hermeneia] Epistole mirror: https://... (all acc
 
 ### Configuration — via environment variables
 
-If you run Hermeneia outside Claude Desktop (e.g. `npm run dev` during development), the same env vars apply directly:
+If you run Hermeneia outside Claude Desktop (e.g. `npm run dev` during development, or under Refugio/Codex), the same env vars apply directly:
 
 ```bash
 EPISTOLE_MIRROR_URL=https://your-epistole-host
