@@ -1,17 +1,18 @@
 <div align="center">
 
-<img src="assets/banner.svg" alt="Hermeneia — WhatsApp for your AI: drag, scan, chat" width="100%">
+<img src="assets/banner.svg" alt="Hermeneia — WhatsApp for your local AI: self-hosted, private, yours" width="100%">
 
 <p>
   <a href="https://github.com/Phantazein-apps/hermeneia/releases/latest"><img src="https://img.shields.io/github/v/release/Phantazein-apps/hermeneia?style=flat-square&labelColor=000000&color=ff0018&label=release" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-f4f2ee?style=flat-square&labelColor=000000&logo=apple&logoColor=white" alt="macOS Apple Silicon">
-  <img src="https://img.shields.io/badge/MCP-any%20client-ff0018?style=flat-square&labelColor=000000" alt="MCP — any client">
+  <img src="https://img.shields.io/badge/macOS%20·%20Linux%20·%20Windows-f4f2ee?style=flat-square&labelColor=000000" alt="Cross-platform">
+  <img src="https://img.shields.io/badge/local%20AI-Refugio-ff0018?style=flat-square&labelColor=000000" alt="Local AI — Refugio">
+  <img src="https://img.shields.io/badge/MCP-any%20client-a8a5a0?style=flat-square&labelColor=000000" alt="MCP — any client">
   <img src="https://img.shields.io/badge/license-MIT-a8a5a0?style=flat-square&labelColor=000000" alt="MIT license">
 </p>
 
-**Let your AI read and send your WhatsApp messages. Install in 2 minutes — no technical skills needed.**
+**Let your AI read and send your WhatsApp messages — running entirely on your own machine.**
 
-Designed for **local AI** — pair it with [Refugio](https://github.com/Phantazein-apps/refugio) to talk to your WhatsApp through a fully self-hosted model. It also works with **Claude Desktop**, **OpenAI Codex**, and any other MCP-capable app.
+Hermeneia is built for **local, self-hosted AI**. The primary way to use it is [**Refugio**](https://github.com/Phantazein-apps/refugio) — a private AI that runs on your own computer (macOS, Linux, or Windows), no cloud and no API keys. It also works with **Claude Desktop**, **OpenAI Codex**, and any other MCP client.
 
 <sub>**ἑρμηνεία** — *interpretation, translation between worlds* · from Hermes, messenger of the gods<br>Part of the <a href="https://phantazein.com">Phantazein</a> toolkit</sub>
 
@@ -19,58 +20,45 @@ Designed for **local AI** — pair it with [Refugio](https://github.com/Phantaze
 
 ---
 
-> 🚧 **Work in progress.** Hermeneia is under active development. It works — thousands of messages flow through it daily — but expect the occasional rough edge. The Claude Desktop setup below is the most polished path today.
+> 🚧 **Work in progress.** Hermeneia is under active development — thousands of messages flow through it daily, but expect the occasional rough edge.
 
-## Get started in 2 minutes
+## Get started
 
-You need three things:
+The intended home for Hermeneia is **[Refugio](https://github.com/Phantazein-apps/refugio)** — a fully self-hosted AI that owns your WhatsApp end to end, so nothing leaves your computer and no third party (not even Anthropic) is in the loop. If you'd rather use Claude, there's a quick drag-install path too.
 
-- 🖥 **A Mac with an Apple chip** — click the ** Apple menu → About This Mac**. If "Chip" says Apple M1, M2, M3, or M4, you're good. (The drag-to-install app below is Apple Silicon for now. On **Linux** — including a Refugio host — and other platforms, run Hermeneia from source or a prebuilt bridge binary; see [Works with](#works-with).)
-- 💬 **The Claude app for Mac** — free download from [claude.ai/download](https://claude.ai/download) if you don't have it.
-- 📱 **Your phone with WhatsApp** on it.
+### Recommended — Refugio (a private AI on your own machine)
 
-### Step 1 — Download
+[Refugio](https://github.com/Phantazein-apps/refugio) is a one-command install of a local LLM + [Open WebUI](https://github.com/open-webui/open-webui) that runs on **macOS, Linux, or Windows**. Its setup wizard installs Hermeneia and links your WhatsApp for you — no separate download, no build step:
 
-Download the latest `hermeneia-x.x.x.mcpb` file from the [**Releases page**](https://github.com/Phantazein-apps/hermeneia/releases/latest) (it's under "Assets").
+```bash
+# macOS / Linux (Windows: see the Refugio README)
+curl -fsSL https://raw.githubusercontent.com/Phantazein-apps/refugio/main/install-refugio | bash
+```
 
-### Step 2 — Drag it into Claude
+When the wizard reaches the **WhatsApp** step it opens a QR page (and prints the URL, so it works on a headless or remote host over an SSH tunnel too). On your phone: **WhatsApp → Settings → Linked Devices → Link a Device**, then scan. That's it — your WhatsApp now lives inside your own local AI. Ask it *"summarize my unread WhatsApp"* or *"what did Mom send me this week?"* right in Open WebUI. Already running Refugio? Re-run the installer and it'll offer to add or re-link WhatsApp.
 
-Open the Claude app and **drag the downloaded file onto the Claude window**. Claude will ask if you want to install it.
+### Alternative — Claude Desktop (macOS, 2-minute drag-install)
 
-> **You'll see a warning** that says the extension gets "access to everything on your computer" and "has not been verified by Anthropic." This message appears for *every* third-party add-on — it's Anthropic's standard notice, not something specific to Hermeneia. Everything Hermeneia does stays on your Mac (see [Is this safe?](#is-this-safe) below), and all the code is public on this page for anyone to inspect. Click **Install**.
+Prefer Claude Desktop? On a **Mac with an Apple chip** you can install Hermeneia as an extension instead:
 
-### Step 3 — Connect your WhatsApp
+1. **Download** the latest `hermeneia-x.x.x.mcpb` from the [Releases page](https://github.com/Phantazein-apps/hermeneia/releases/latest) (under "Assets"), using the free [Claude app for Mac](https://claude.ai/download).
+2. **Drag it onto the Claude window.** Claude asks to install it — you'll see the standard *"access to everything… not verified by Anthropic"* notice that appears for **every** third-party extension (everything stays on your Mac; see [Is this safe?](#is-this-safe)). Click **Install**.
+3. **Connect WhatsApp:** type *"check my WhatsApp status"*, a QR page opens in your browser, and on your phone go to **WhatsApp → Settings → Linked Devices → Link a Device** and scan it.
+4. **Try it:** give it a few minutes to sync (up to 3 years of history), then ask *"summarize my unread WhatsApp messages"*, *"find the message with the Airbnb link"*, or *"show me the photo Tyler sent yesterday."*
 
-1. In Claude, type: **"check my WhatsApp status"**
-2. A page opens in your browser showing a **QR code**
-3. On your phone, open WhatsApp → **Settings** → **Linked Devices** → **Link a Device**
-4. Point your phone's camera at the QR code
-
-That's it. You only do this once — the connection survives restarts.
-
-### Step 4 — Try it
-
-Give it a few minutes on first connect while it syncs your message history (up to 3 years). Then just talk to Claude:
-
-- *"Summarize my unread WhatsApp messages"*
-- *"What did Mom send me this week?"*
-- *"Find the message where someone shared an Airbnb link"*
-- *"Send María a WhatsApp saying I'm running 10 minutes late"*
-- *"Show me the photo Tyler sent yesterday"*
-
-Claude will always show you a message before sending it, and asks which account to use if you've connected more than one.
+You only scan once — the link survives restarts. Claude always shows you a message before sending, and asks which account to use if you've connected more than one.
 
 ### Try it without connecting WhatsApp
 
-Want to see what Hermeneia can do before scanning a QR code? Turn on **Demo mode** in the extension's settings (or set `HERMENEIA_DEMO=1`) and Claude gets a full set of realistic sample contacts, chats, and messages — no WhatsApp account, no real data, nothing sent anywhere.
+Want to see what Hermeneia can do before scanning a QR code? Set `HERMENEIA_DEMO=1` (or flip **Demo mode** in the Claude extension's settings) and your assistant gets a full set of realistic sample contacts, chats, and messages — no WhatsApp account, no real data, nothing sent anywhere.
 
 ## Is this safe?
 
-**Your messages never leave your computer.** Everything is stored in a local database on your Mac. Hermeneia only talks to WhatsApp's own servers — the exact same ones the WhatsApp app on your phone talks to. No cloud service, no telemetry, no account to create, and the entire source code is public in this repository.
+**Your messages never leave your computer.** Everything is stored in a local database on the machine running Hermeneia — your Refugio host or your Mac. Hermeneia only talks to WhatsApp's own servers — the exact same ones the WhatsApp app on your phone talks to. No cloud service, no telemetry, no account to create, and the entire source code is public in this repository.
 
-On your phone, Hermeneia shows up as a linked device called **"Claude"** (WhatsApp → Settings → Linked Devices) — the same mechanism as WhatsApp Web or WhatsApp on a second computer.
+On your phone, Hermeneia shows up as a linked device (WhatsApp → Settings → Linked Devices) — the same mechanism as WhatsApp Web or WhatsApp on a second computer. By default it's named **"Claude"**; a host can rename it (Refugio brands it, and you can set `HERMENEIA_DEVICE_NAME` yourself).
 
-**To disconnect at any time:** on your phone, WhatsApp → Settings → Linked Devices → tap **Claude** → **Log Out**. To remove Hermeneia completely, delete the extension in the Claude app (Settings → Extensions).
+**To disconnect at any time:** on your phone, WhatsApp → Settings → Linked Devices → tap the Hermeneia device → **Log Out**. To remove Hermeneia completely, delete the Refugio connector (or the Claude extension, if that's how you installed it).
 
 A note on how it works: WhatsApp doesn't offer an official way for personal accounts to connect outside apps, so Hermeneia — like every WhatsApp tool of this kind — uses the same protocol WhatsApp Web uses. That's also why it can't appear in Anthropic's "verified" directory, which requires an official login flow that WhatsApp doesn't provide.
 
@@ -78,11 +66,13 @@ A note on how it works: WhatsApp doesn't offer an official way for personal acco
 
 **"It can't find an old message I know exists."** WhatsApp only hands linked devices part of your history — active chats get years of messages, quiet ones sometimes get none. Fix: open that chat in WhatsApp *on your phone* and leave it on screen for a minute or two; WhatsApp will usually push its history over. New messages always come through reliably.
 
-**"The QR page didn't open."** Just ask Claude again: *"check my WhatsApp status."*
+**"The QR page didn't open."** Ask your assistant to *"check my WhatsApp status"* again (or, under Refugio, re-run the installer's WhatsApp step) for a fresh QR. On a headless host, open the setup URL it prints (`http://127.0.0.1:3456/setup`).
 
-**"It stopped seeing new messages."** Quit the Claude app fully and reopen it. Hermeneia also watches its own connection and restarts it automatically if WhatsApp goes quiet.
+**"It says linked but WhatsApp isn't connected."** WhatsApp can revoke a linked device on its own, or you may have removed the Hermeneia device from your phone — nothing on the host changes, so it can look linked when it isn't. Just re-link: get a fresh QR (above) and scan again. If your phone refuses to link, you may have hit WhatsApp's 4-device limit — remove old linked devices first.
 
-**"Can I use it on Windows / Linux / just my phone / an Intel Mac?"** The one-click Claude Desktop install is Apple Silicon for now. But the underlying bridge is pure Go and builds for macOS (Apple Silicon + Intel), Linux (x64 + arm64), and Windows — so on those platforms you can run Hermeneia from source or a prebuilt bridge binary with Claude Desktop, [Refugio](https://github.com/Phantazein-apps/refugio), Codex, or any MCP client. See [Works with](#works-with). (Just your phone alone, no — Hermeneia needs a computer to run on.)
+**"It stopped seeing new messages."** Restart Hermeneia (restart Refugio, or quit and reopen the Claude app). It also watches its own connection and restarts the bridge automatically if WhatsApp goes quiet.
+
+**"Which platforms does it run on?"** The bridge is pure Go and runs on **macOS (Apple Silicon + Intel), Linux (x64 + arm64), and Windows** — which is why Refugio can host it on a headless Linux box. The one-click Claude Desktop drag-install is macOS Apple Silicon for now; every other combination runs via Refugio, from source, or a prebuilt bridge binary. See [Works with](#works-with). (Just your phone alone, no — Hermeneia needs a computer to run on.)
 
 **"Does this work with more than one WhatsApp number?"** Yes — see below.
 
@@ -108,7 +98,7 @@ All accounts reconnect automatically on restart.
 
 ## Works with
 
-Hermeneia is a standard stdio MCP server — any client that can spawn an MCP server can use it. For clients other than Claude Desktop, build once and point your client at `dist/index.js`:
+Hermeneia is a standard stdio MCP server, so it plugs into anything that can spawn one. **Refugio** (see [Get started](#get-started)) is the recommended host and sets all of this up for you. The sections below cover pointing Refugio at your own checkout, plus Codex, Claude Code, Cursor, and other clients. For those, build once and point the client at `dist/index.js`:
 
 ```bash
 git clone https://github.com/Phantazein-apps/hermeneia.git
@@ -119,18 +109,18 @@ npm run build   # bundles dist/index.js + the Go bridge for your platform
 
 The Go bridge is pure Go (no CGO), so `npm run build` cross-compiles cleanly on macOS (Apple Silicon + Intel), Linux (x64 + arm64), and Windows. Don't want a Go toolchain? Every [release](https://github.com/Phantazein-apps/hermeneia/releases/latest) also ships standalone `hermeneia-bridge-<os>-<arch>` binaries as `.tar.gz` assets — download the one for your platform and drop it next to `dist/index.js`.
 
-### Refugio (local AI — recommended)
+### Refugio (recommended host)
 
-[Refugio](https://github.com/Phantazein-apps/refugio) runs a fully self-hosted stack (Ollama / LM Studio + Open WebUI) and exposes MCP tools through MCPO. Point Refugio at your built Hermeneia checkout:
+The [Refugio](https://github.com/Phantazein-apps/refugio) installer already clones Hermeneia, fetches the bridge binary for your platform, links your WhatsApp via QR, and wires it into Open WebUI through MCPO — nothing to configure by hand. To point Refugio at your **own** Hermeneia checkout instead, set `HERMENEIA_DIR` in `~/.refugio.env`:
 
 ```bash
 # ~/.refugio.env
 HERMENEIA_DIR=/path/to/hermeneia
 ```
 
-Refugio's supervisor picks it up and your WhatsApp tools appear in Open WebUI alongside the other connectors. *(Refugio-side support is in progress — until it lands, add a stdio entry to Refugio's `mcpo-config.json` manually: `{"command": "node", "args": ["/path/to/hermeneia/dist/index.js"]}`.)*
+Refugio's supervisor picks it up and your WhatsApp tools appear in Open WebUI alongside the other connectors.
 
-> **Tip for local models:** Hermeneia exposes 17 tools. Larger tool-calling-capable models handle this well; small models may struggle with tool selection.
+> **Tip for local models:** Hermeneia exposes 18 tools. Larger tool-calling-capable models handle this well; small models may struggle with tool selection.
 
 ### OpenAI Codex
 
@@ -167,14 +157,14 @@ Generic MCP server config (Claude Code, Cursor, Windsurf, etc.):
 - **Deep history** — syncs up to 3 years of message history (1,000 messages per chat) on first connect
 - **Multi-account** — `list_accounts`, `add_account`, `remove_account`
 
-17 MCP tools in total.
+18 MCP tools in total.
 
 ## Architecture
 
 A Go subprocess handles the WhatsApp connection; a Node.js process runs the MCP server and SQLite store.
 
 1. **Go bridge** — [whatsmeow](https://github.com/tulir/whatsmeow) handles the WhatsApp Web protocol, QR auth, history sync, and message sending
-2. **MCP server** — [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/typescript-sdk) exposes 17 tools via stdio
+2. **MCP server** — [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/typescript-sdk) exposes 18 tools via stdio
 3. **SQLite** — [sql.js](https://github.com/sql-js/sql.js) stores messages, chats, and contacts locally
 4. **Setup page** — local HTTP server for QR code display (only during auth)
 
@@ -203,7 +193,7 @@ Origin chain: [`lharries/whatsapp-mcp`](https://github.com/lharries/whatsapp-mcp
 - **Community / parent-group awareness** - chats know which Community they belong to.
 - **Full contact resolution** - phone numbers, LIDs, push names, verified names. Upstream stops at JIDs.
 - **Device shows as "Claude"** in WhatsApp Linked Devices instead of a generic browser string.
-- **17 tools** vs upstream's ~10.
+- **18 tools** vs upstream's ~10.
 
 ### Vs other WhatsApp MCPs
 
