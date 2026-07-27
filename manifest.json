@@ -20,6 +20,7 @@
       "args": ["${__dirname}/dist/index.js"],
       "env": {
         "HERMENEIA_QR_PORT": "${user_config.qr_port}",
+        "HERMENEIA_DEMO": "${user_config.demo_mode}",
         "EPISTOLE_MIRROR_URL": "${user_config.epistole_mirror_url}",
         "EPISTOLE_MIRROR_TOKEN": "${user_config.epistole_mirror_token}",
         "EPISTOLE_MIRROR_ACCOUNTS": "${user_config.epistole_mirror_accounts}"
@@ -27,6 +28,13 @@
     }
   },
   "user_config": {
+    "demo_mode": {
+      "type": "boolean",
+      "title": "Demo mode — try Hermeneia with sample data, no WhatsApp needed",
+      "description": "Runs Hermeneia against bundled fixture data (fake contacts, chats, and messages) instead of a real WhatsApp account. Nothing is sent anywhere. Turn this off and restart to connect your real WhatsApp.",
+      "required": false,
+      "default": false
+    },
     "qr_port": {
       "type": "string",
       "title": "Setup Page Port",

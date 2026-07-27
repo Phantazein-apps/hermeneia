@@ -17,11 +17,20 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
   if (typeof require !== "undefined") return require.apply(this, arguments);
   throw Error('Dynamic require of "' + x + '" is not supported');
 });
-var __esm = (fn, res) => function __init() {
-  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+var __esm = (fn, res, err) => function __init() {
+  if (err) throw err[0];
+  try {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  } catch (e) {
+    throw err = [e], e;
+  }
 };
 var __commonJS = (cb, mod) => function __require2() {
-  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  try {
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  } catch (e) {
+    throw mod = 0, e;
+  }
 };
 var __export = (target, all) => {
   for (var name in all)
@@ -3120,6 +3129,9 @@ var require_utils = __commonJS({
     "use strict";
     var isUUID = RegExp.prototype.test.bind(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu);
     var isIPv4 = RegExp.prototype.test.bind(/^(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)$/u);
+    var isHexPair = RegExp.prototype.test.bind(/^[\da-f]{2}$/iu);
+    var isUnreserved = RegExp.prototype.test.bind(/^[\da-z\-._~]$/iu);
+    var isPathCharacter = RegExp.prototype.test.bind(/^[\da-z\-._~!$&'()*+,;=:@/]$/iu);
     function stringArrayToHexStripped(input) {
       let acc = "";
       let code = 0;
@@ -3312,27 +3324,77 @@ var require_utils = __commonJS({
       }
       return output.join("");
     }
-    function normalizeComponentEncoding(component, esc2) {
-      const func = esc2 !== true ? escape : unescape;
-      if (component.scheme !== void 0) {
-        component.scheme = func(component.scheme);
+    var HOST_DELIMS = { "@": "%40", "/": "%2F", "?": "%3F", "#": "%23", ":": "%3A" };
+    var HOST_DELIM_RE = /[@/?#:]/g;
+    var HOST_DELIM_NO_COLON_RE = /[@/?#]/g;
+    function reescapeHostDelimiters(host, isIP) {
+      const re = isIP ? HOST_DELIM_NO_COLON_RE : HOST_DELIM_RE;
+      re.lastIndex = 0;
+      return host.replace(re, (ch) => HOST_DELIMS[ch]);
+    }
+    function normalizePercentEncoding(input, decodeUnreserved = false) {
+      if (input.indexOf("%") === -1) {
+        return input;
       }
-      if (component.userinfo !== void 0) {
-        component.userinfo = func(component.userinfo);
+      let output = "";
+      for (let i = 0; i < input.length; i++) {
+        if (input[i] === "%" && i + 2 < input.length) {
+          const hex3 = input.slice(i + 1, i + 3);
+          if (isHexPair(hex3)) {
+            const normalizedHex = hex3.toUpperCase();
+            const decoded = String.fromCharCode(parseInt(normalizedHex, 16));
+            if (decodeUnreserved && isUnreserved(decoded)) {
+              output += decoded;
+            } else {
+              output += "%" + normalizedHex;
+            }
+            i += 2;
+            continue;
+          }
+        }
+        output += input[i];
       }
-      if (component.host !== void 0) {
-        component.host = func(component.host);
+      return output;
+    }
+    function normalizePathEncoding(input) {
+      let output = "";
+      for (let i = 0; i < input.length; i++) {
+        if (input[i] === "%" && i + 2 < input.length) {
+          const hex3 = input.slice(i + 1, i + 3);
+          if (isHexPair(hex3)) {
+            const normalizedHex = hex3.toUpperCase();
+            const decoded = String.fromCharCode(parseInt(normalizedHex, 16));
+            if (decoded !== "." && isUnreserved(decoded)) {
+              output += decoded;
+            } else {
+              output += "%" + normalizedHex;
+            }
+            i += 2;
+            continue;
+          }
+        }
+        if (isPathCharacter(input[i])) {
+          output += input[i];
+        } else {
+          output += escape(input[i]);
+        }
       }
-      if (component.path !== void 0) {
-        component.path = func(component.path);
+      return output;
+    }
+    function escapePreservingEscapes(input) {
+      let output = "";
+      for (let i = 0; i < input.length; i++) {
+        if (input[i] === "%" && i + 2 < input.length) {
+          const hex3 = input.slice(i + 1, i + 3);
+          if (isHexPair(hex3)) {
+            output += "%" + hex3.toUpperCase();
+            i += 2;
+            continue;
+          }
+        }
+        output += escape(input[i]);
       }
-      if (component.query !== void 0) {
-        component.query = func(component.query);
-      }
-      if (component.fragment !== void 0) {
-        component.fragment = func(component.fragment);
-      }
-      return component;
+      return output;
     }
     function recomposeAuthority(component) {
       const uriTokens = [];
@@ -3347,7 +3409,7 @@ var require_utils = __commonJS({
           if (ipV6res.isIPV6 === true) {
             host = `[${ipV6res.escapedHost}]`;
           } else {
-            host = component.host;
+            host = reescapeHostDelimiters(host, false);
           }
         }
         uriTokens.push(host);
@@ -3361,7 +3423,10 @@ var require_utils = __commonJS({
     module.exports = {
       nonSimpleDomain,
       recomposeAuthority,
-      normalizeComponentEncoding,
+      reescapeHostDelimiters,
+      normalizePercentEncoding,
+      normalizePathEncoding,
+      escapePreservingEscapes,
       removeDotSegments,
       isIPv4,
       isUUID,
@@ -3585,12 +3650,12 @@ var require_schemes = __commonJS({
 var require_fast_uri = __commonJS({
   "node_modules/fast-uri/index.js"(exports, module) {
     "use strict";
-    var { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizeComponentEncoding, isIPv4, nonSimpleDomain } = require_utils();
+    var { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizePercentEncoding, normalizePathEncoding, escapePreservingEscapes, reescapeHostDelimiters, isIPv4, nonSimpleDomain } = require_utils();
     var { SCHEMES, getSchemeHandler } = require_schemes();
     function normalize(uri, options) {
       if (typeof uri === "string") {
         uri = /** @type {T} */
-        serialize(parse3(uri, options), options);
+        normalizeString(uri, options);
       } else if (typeof uri === "object") {
         uri = /** @type {T} */
         parse3(serialize(uri, options), options);
@@ -3657,19 +3722,9 @@ var require_fast_uri = __commonJS({
       return target;
     }
     function equal(uriA, uriB, options) {
-      if (typeof uriA === "string") {
-        uriA = unescape(uriA);
-        uriA = serialize(normalizeComponentEncoding(parse3(uriA, options), true), { ...options, skipEscape: true });
-      } else if (typeof uriA === "object") {
-        uriA = serialize(normalizeComponentEncoding(uriA, true), { ...options, skipEscape: true });
-      }
-      if (typeof uriB === "string") {
-        uriB = unescape(uriB);
-        uriB = serialize(normalizeComponentEncoding(parse3(uriB, options), true), { ...options, skipEscape: true });
-      } else if (typeof uriB === "object") {
-        uriB = serialize(normalizeComponentEncoding(uriB, true), { ...options, skipEscape: true });
-      }
-      return uriA.toLowerCase() === uriB.toLowerCase();
+      const normalizedA = normalizeComparableURI(uriA, options);
+      const normalizedB = normalizeComparableURI(uriB, options);
+      return normalizedA !== void 0 && normalizedB !== void 0 && normalizedA.toLowerCase() === normalizedB.toLowerCase();
     }
     function serialize(cmpts, opts) {
       const component = {
@@ -3694,12 +3749,12 @@ var require_fast_uri = __commonJS({
       if (schemeHandler && schemeHandler.serialize) schemeHandler.serialize(component, options);
       if (component.path !== void 0) {
         if (!options.skipEscape) {
-          component.path = escape(component.path);
+          component.path = escapePreservingEscapes(component.path);
           if (component.scheme !== void 0) {
             component.path = component.path.split("%3A").join(":");
           }
         } else {
-          component.path = unescape(component.path);
+          component.path = normalizePercentEncoding(component.path);
         }
       }
       if (options.reference !== "suffix" && component.scheme) {
@@ -3734,7 +3789,17 @@ var require_fast_uri = __commonJS({
       return uriTokens.join("");
     }
     var URI_PARSE = /^(?:([^#/:?]+):)?(?:\/\/((?:([^#/?@]*)@)?(\[[^#/?\]]+\]|[^#/:?]*)(?::(\d*))?))?([^#?]*)(?:\?([^#]*))?(?:#((?:.|[\n\r])*))?/u;
-    function parse3(uri, opts) {
+    var AUTHORITY_PREFIX = /^(?:[^#/:?]+:)?\/\/([^/?#]*)/;
+    function getParseError(parsed, matches) {
+      if (matches[2] !== void 0 && parsed.path && parsed.path[0] !== "/") {
+        return 'URI path must start with "/" when authority is present.';
+      }
+      if (typeof parsed.port === "number" && (parsed.port < 0 || parsed.port > 65535)) {
+        return "URI port is malformed.";
+      }
+      return void 0;
+    }
+    function parseWithStatus(uri, opts) {
       const options = Object.assign({}, opts);
       const parsed = {
         scheme: void 0,
@@ -3745,6 +3810,7 @@ var require_fast_uri = __commonJS({
         query: void 0,
         fragment: void 0
       };
+      let malformedAuthorityOrPort = false;
       let isIP = false;
       if (options.reference === "suffix") {
         if (options.scheme) {
@@ -3752,6 +3818,11 @@ var require_fast_uri = __commonJS({
         } else {
           uri = "//" + uri;
         }
+      }
+      const authorityMatch = uri.match(AUTHORITY_PREFIX);
+      if (authorityMatch !== null && authorityMatch[1].indexOf("\\") !== -1) {
+        parsed.error = "URI authority must not contain a literal backslash.";
+        malformedAuthorityOrPort = true;
       }
       const matches = uri.match(URI_PARSE);
       if (matches) {
@@ -3764,6 +3835,11 @@ var require_fast_uri = __commonJS({
         parsed.fragment = matches[8];
         if (isNaN(parsed.port)) {
           parsed.port = matches[5];
+        }
+        const parseError = getParseError(parsed, matches);
+        if (parseError !== void 0) {
+          parsed.error = parsed.error || parseError;
+          malformedAuthorityOrPort = true;
         }
         if (parsed.host) {
           const ipv4result = isIPv4(parsed.host);
@@ -3791,7 +3867,7 @@ var require_fast_uri = __commonJS({
         if (!options.unicodeSupport && (!schemeHandler || !schemeHandler.unicodeSupport)) {
           if (parsed.host && (options.domainHost || schemeHandler && schemeHandler.domainHost) && isIP === false && nonSimpleDomain(parsed.host)) {
             try {
-              parsed.host = URL.domainToASCII(parsed.host.toLowerCase());
+              parsed.host = new URL("http://" + parsed.host).hostname;
             } catch (e) {
               parsed.error = parsed.error || "Host's domain name can not be converted to ASCII: " + e;
             }
@@ -3803,14 +3879,18 @@ var require_fast_uri = __commonJS({
               parsed.scheme = unescape(parsed.scheme);
             }
             if (parsed.host !== void 0) {
-              parsed.host = unescape(parsed.host);
+              parsed.host = reescapeHostDelimiters(unescape(parsed.host), isIP);
             }
           }
           if (parsed.path) {
-            parsed.path = escape(unescape(parsed.path));
+            parsed.path = normalizePathEncoding(parsed.path);
           }
           if (parsed.fragment) {
-            parsed.fragment = encodeURI(decodeURIComponent(parsed.fragment));
+            try {
+              parsed.fragment = encodeURI(decodeURIComponent(parsed.fragment));
+            } catch {
+              parsed.error = parsed.error || "URI malformed";
+            }
           }
         }
         if (schemeHandler && schemeHandler.parse) {
@@ -3819,7 +3899,29 @@ var require_fast_uri = __commonJS({
       } else {
         parsed.error = parsed.error || "URI can not be parsed.";
       }
-      return parsed;
+      return { parsed, malformedAuthorityOrPort };
+    }
+    function parse3(uri, opts) {
+      return parseWithStatus(uri, opts).parsed;
+    }
+    function normalizeString(uri, opts) {
+      return normalizeStringWithStatus(uri, opts).normalized;
+    }
+    function normalizeStringWithStatus(uri, opts) {
+      const { parsed, malformedAuthorityOrPort } = parseWithStatus(uri, opts);
+      return {
+        normalized: malformedAuthorityOrPort ? uri : serialize(parsed, opts),
+        malformedAuthorityOrPort
+      };
+    }
+    function normalizeComparableURI(uri, opts) {
+      if (typeof uri === "string") {
+        const { normalized, malformedAuthorityOrPort } = normalizeStringWithStatus(uri, opts);
+        return malformedAuthorityOrPort ? void 0 : normalized;
+      }
+      if (typeof uri === "object") {
+        return serialize(uri, opts);
+      }
     }
     var fastUri = {
       SCHEMES,
@@ -4328,11 +4430,11 @@ var require_core = __commonJS({
     Ajv2.ValidationError = validation_error_1.default;
     Ajv2.MissingRefError = ref_error_1.default;
     exports.default = Ajv2;
-    function checkOptions(checkOpts, options, msg, log7 = "error") {
+    function checkOptions(checkOpts, options, msg, log9 = "error") {
       for (const key in checkOpts) {
         const opt = key;
         if (opt in options)
-          this.logger[log7](`${msg}: option ${key}. ${checkOpts[opt]}`);
+          this.logger[log9](`${msg}: option ${key}. ${checkOpts[opt]}`);
       }
     }
     function getSchEnv(keyRef) {
@@ -8275,10 +8377,10 @@ var require_sql_wasm = __commonJS({
             w ? (0 === h && (h = pa()), g[q] = w(d[q])) : g[q] = d[q];
           }
           c = a(...g);
-          return c = function(t) {
+          return c = (function(t) {
             0 !== h && ra(h);
             return "string" === b ? z2(t) : "boolean" === b ? !!t : t;
-          }(c);
+          })(c);
         }, fa = (a) => {
           var b = ib(a) + 1, c = da(b);
           c && M(a, C, c, b);
@@ -9729,7 +9831,7 @@ var require_galois_field = __commonJS({
         EXP_TABLE[i] = EXP_TABLE[i - 255];
       }
     })();
-    exports.log = function log7(n) {
+    exports.log = function log9(n) {
       if (n < 1) throw new Error("log(" + n + ")");
       return LOG_TABLE[n];
     };
@@ -11942,7 +12044,7 @@ var require_bitpacker = __commonJS({
         options.colorType
       ) !== -1;
       if (options.colorType === options.inputColorType) {
-        let bigEndian = function() {
+        let bigEndian = (function() {
           let buffer = new ArrayBuffer(2);
           new DataView(buffer).setInt16(
             0,
@@ -11951,7 +12053,7 @@ var require_bitpacker = __commonJS({
             /* littleEndian */
           );
           return new Int16Array(buffer)[0] !== 256;
-        }();
+        })();
         if (options.bitDepth === 8 || options.bitDepth === 16 && bigEndian) {
           return dataIn;
         }
@@ -13793,7 +13895,7 @@ __export(open_exports, {
 import process9 from "node:process";
 import { Buffer as Buffer2 } from "node:buffer";
 import path from "node:path";
-import { fileURLToPath as fileURLToPath3 } from "node:url";
+import { fileURLToPath as fileURLToPath4 } from "node:url";
 import { promisify as promisify5 } from "node:util";
 import childProcess from "node:child_process";
 import fs5, { constants as fsConstants2 } from "node:fs/promises";
@@ -13841,7 +13943,7 @@ function detectPlatformBinary({ [platform]: platformBinary }, { wsl }) {
   }
   return detectArchBinary(platformBinary);
 }
-var execFile5, __dirname4, localXdgOpenPath, platform, arch, pTryEach, baseOpen, open, openApp, apps, open_default;
+var execFile5, __dirname5, localXdgOpenPath, platform, arch, pTryEach, baseOpen, open, openApp, apps, open_default;
 var init_open = __esm({
   "node_modules/open/index.js"() {
     init_wsl_utils();
@@ -13849,8 +13951,8 @@ var init_open = __esm({
     init_default_browser();
     init_is_inside_container();
     execFile5 = promisify5(childProcess.execFile);
-    __dirname4 = path.dirname(fileURLToPath3(import.meta.url));
-    localXdgOpenPath = path.join(__dirname4, "xdg-open");
+    __dirname5 = path.dirname(fileURLToPath4(import.meta.url));
+    localXdgOpenPath = path.join(__dirname5, "xdg-open");
     ({ platform, arch } = process9);
     pTryEach = async (array2, mapper) => {
       let latestError;
@@ -13972,7 +14074,7 @@ var init_open = __esm({
         if (app) {
           command = app;
         } else {
-          const isBundled = !__dirname4 || __dirname4 === "/";
+          const isBundled = !__dirname5 || __dirname5 === "/";
           let exeLocalXdgOpen = false;
           try {
             await fs5.access(localXdgOpenPath, fsConstants2.X_OK);
@@ -17786,7 +17888,6 @@ ZodNaN.create = (params) => {
     ...processCreateParams(params)
   });
 };
-var BRAND = Symbol("zod_brand");
 var ZodBranded = class extends ZodType {
   _parse(input) {
     const { ctx } = this._processInputParams(input);
@@ -18011,7 +18112,6 @@ function $constructor(name, initializer3, params) {
   Object.defineProperty(_, "name", { value: name });
   return _;
 }
-var $brand = Symbol("zod_brand");
 var $ZodAsyncError = class extends Error {
   constructor() {
     super(`Encountered Promise during synchronous parse. Use .parseAsync() instead.`);
@@ -18158,7 +18258,7 @@ function floatSafeRemainder2(val, step) {
   const stepInt = Number.parseInt(step.toFixed(decCount).replace(".", ""));
   return valInt % stepInt / 10 ** decCount;
 }
-var EVALUATING = Symbol("evaluating");
+var EVALUATING = /* @__PURE__ */ Symbol("evaluating");
 function defineLazy(object3, key, getter) {
   let value = void 0;
   Object.defineProperty(object3, key, {
@@ -21685,8 +21785,6 @@ function en_default2() {
 
 // node_modules/zod/v4/core/registries.js
 var _a;
-var $output = Symbol("ZodOutput");
-var $input = Symbol("ZodInput");
 var $ZodRegistry = class {
   constructor() {
     this._map = /* @__PURE__ */ new WeakMap();
@@ -22488,7 +22586,7 @@ function _stringbool(Classes, _params) {
     type: "pipe",
     in: stringSchema,
     out: booleanSchema,
-    transform: (input, payload) => {
+    transform: ((input, payload) => {
       let data = input;
       if (params.case !== "sensitive")
         data = data.toLowerCase();
@@ -22507,14 +22605,14 @@ function _stringbool(Classes, _params) {
         });
         return {};
       }
-    },
-    reverseTransform: (input, _payload) => {
+    }),
+    reverseTransform: ((input, _payload) => {
       if (input === true) {
         return truthyArray[0] || "true";
       } else {
         return falsyArray[0] || "false";
       }
-    },
+    }),
     error: params.error
   });
   return codec2;
@@ -23752,10 +23850,10 @@ var ZodType2 = /* @__PURE__ */ $constructor("ZodType", (inst, def) => {
   inst.with = inst.check;
   inst.clone = (def2, params) => clone(inst, def2, params);
   inst.brand = () => inst;
-  inst.register = (reg, meta3) => {
+  inst.register = ((reg, meta3) => {
     reg.add(inst, meta3);
     return inst;
-  };
+  });
   inst.parse = (data, params) => parse2(inst, data, params, { callee: inst.parse });
   inst.safeParse = (data, params) => safeParse3(inst, data, params);
   inst.parseAsync = async (data, params) => parseAsync2(inst, data, params, { callee: inst.parseAsync });
@@ -26344,9 +26442,6 @@ function isTerminal(status) {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
 
-// node_modules/zod-to-json-schema/dist/esm/Options.js
-var ignoreOverride = Symbol("Let zodToJsonSchema decide on which parser to use");
-
 // node_modules/zod-to-json-schema/dist/esm/parsers/string.js
 var ALPHA_NUMERIC = new Set("ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvxyz0123456789");
 
@@ -28114,14 +28209,14 @@ var StdioServerTransport = class {
 };
 
 // src/index.ts
-import { join as join6, dirname as dirname3 } from "path";
+import { join as join7, dirname as dirname4 } from "path";
 import { homedir } from "os";
 import { existsSync as existsSync5, cpSync as cpSync2, mkdirSync as mkdirSync5 } from "fs";
-import { fileURLToPath as fileURLToPath4 } from "url";
+import { fileURLToPath as fileURLToPath5 } from "url";
 
 // src/bridge-manager.ts
 import { mkdirSync as mkdirSync3, existsSync as existsSync3, readFileSync as readFileSync3, writeFileSync as writeFileSync2, renameSync, cpSync } from "fs";
-import { join as join4 } from "path";
+import { join as join5 } from "path";
 
 // src/bridge.ts
 import { spawn } from "child_process";
@@ -29447,12 +29542,455 @@ var WhatsAppBridge = class extends EventEmitter {
   }
 };
 
+// src/demo-bridge.ts
+import { EventEmitter as EventEmitter2 } from "events";
+
+// src/demo-fixtures.ts
+import { join as join3, dirname as dirname3 } from "path";
+import { fileURLToPath as fileURLToPath3 } from "url";
+var __dirname4 = dirname3(fileURLToPath3(import.meta.url));
+var NOW = Date.now();
+var DAY_MS = 24 * 60 * 60 * 1e3;
+function daysAgo(n, hourOfDay = 12) {
+  const d = new Date(NOW - n * DAY_MS);
+  d.setUTCHours(hourOfDay, n * 7 % 60, 0, 0);
+  return d.toISOString();
+}
+function hoursAgo(h) {
+  return new Date(NOW - h * 60 * 60 * 1e3).toISOString();
+}
+var DEMO_PHOTO_PATH = join3(__dirname4, "..", "assets", "demo", "sample-photo.png");
+var CONTACTS = [
+  { id: "34600100001@s.whatsapp.net", lid: null, phoneJid: null, name: "Mom", notify: "Mom \u2764\uFE0F", verifiedName: null },
+  { id: "34600100002@s.whatsapp.net", lid: null, phoneJid: null, name: "Tyler Chen", notify: "Tyler", verifiedName: null },
+  { id: "34600100003@s.whatsapp.net", lid: null, phoneJid: null, name: "Mar\xEDa Garc\xEDa", notify: "Maria", verifiedName: null },
+  // push-name-only — no saved contact name, WhatsApp shows the push name
+  { id: "34600100004@s.whatsapp.net", lid: null, phoneJid: null, name: null, notify: "Alex R.", verifiedName: null },
+  // phone-number-only — no saved name, no push name either
+  { id: "34600100005@s.whatsapp.net", lid: null, phoneJid: null, name: null, notify: null, verifiedName: null },
+  { id: "34600100006@s.whatsapp.net", lid: null, phoneJid: null, name: "Diego Fern\xE1ndez", notify: "Diego", verifiedName: null },
+  { id: "34600100007@s.whatsapp.net", lid: null, phoneJid: null, name: "Sam", notify: "Sam", verifiedName: null },
+  { id: "34600100008@s.whatsapp.net", lid: null, phoneJid: null, name: "Abuela", notify: "Abuela \u2764\uFE0F", verifiedName: null }
+];
+var JID = {
+  mom: CONTACTS[0].id,
+  tyler: CONTACTS[1].id,
+  maria: CONTACTS[2].id,
+  alex: CONTACTS[3].id,
+  unknown: CONTACTS[4].id,
+  diego: CONTACTS[5].id,
+  sam: CONTACTS[6].id,
+  abuela: CONTACTS[7].id
+};
+var COMMUNITY_JID = "120363000000000001@g.us";
+var FAMILY_GROUP_JID = "120363000000000002@g.us";
+var WORK_GROUP_JID = "120363000000000003@g.us";
+var CHATS = [
+  { jid: JID.tyler, name: "Tyler Chen", lastMessageTime: hoursAgo(2), unreadCount: 2, archived: false },
+  { jid: JID.maria, name: "Mar\xEDa Garc\xEDa", lastMessageTime: hoursAgo(5), unreadCount: 1, archived: false },
+  // Community parent — a container group; not one of the "6 chats", but its
+  // own row so Family's parent_group_jid resolves to something real.
+  { jid: COMMUNITY_JID, name: "Garc\xEDa Family", lastMessageTime: daysAgo(30), unreadCount: 0, archived: false, isParentGroup: true },
+  { jid: FAMILY_GROUP_JID, name: "Family \u{1F468}\u200D\u{1F469}\u200D\u{1F467}", lastMessageTime: daysAgo(1), unreadCount: 0, archived: false, parentGroupJid: COMMUNITY_JID },
+  { jid: WORK_GROUP_JID, name: "Acme Launch \u{1F680}", lastMessageTime: hoursAgo(3), unreadCount: 3, archived: false },
+  { jid: JID.abuela, name: "Abuela", lastMessageTime: daysAgo(38), unreadCount: 0, archived: true },
+  { jid: JID.sam, name: "Sam", lastMessageTime: daysAgo(730), unreadCount: 0, archived: false }
+];
+var msgCounter = 0;
+var nextId = () => `demo-msg-${++msgCounter}`;
+function convo(chatJid, entries) {
+  return entries.map((e) => ({
+    id: nextId(),
+    chatJid,
+    sender: e.from === "me" ? "me" : e.from,
+    content: e.text,
+    timestamp: e.h !== void 0 ? hoursAgo(e.h) : daysAgo(e.d ?? 0),
+    isFromMe: e.from === "me",
+    mediaType: e.media ?? null,
+    mediaInfo: e.mediaInfo ?? null
+  }));
+}
+var DEMO_PHOTO_MESSAGE_ID = "";
+function tylerFiller() {
+  const lines = [
+    "yo, you around this weekend?",
+    "lol same",
+    "did you see the game last night \u{1F605}",
+    "no way",
+    "sending you the link in a sec",
+    "\u{1F44D}",
+    "haha exactly",
+    "how's the new place btw",
+    "still unpacking boxes, it's chaos",
+    "same energy honestly",
+    "ok brb",
+    "back",
+    "coffee tomorrow?",
+    "yeah let's do 10am",
+    "perfect, usual spot?",
+    "yep \u{1F64C}"
+  ];
+  const msgs = [];
+  for (let i = 0; i < lines.length; i++) {
+    msgs.push(
+      ...convo(JID.tyler, [{ from: i % 2 === 0 ? JID.tyler : "me", text: lines[i], d: 9 - Math.floor(i / 2) }])
+    );
+  }
+  const photo = convo(JID.tyler, [
+    { from: JID.tyler, text: "check this out", h: 26, media: "image", mediaInfo: { mimetype: "image/png", filename: "sample-photo.png" } }
+  ])[0];
+  DEMO_PHOTO_MESSAGE_ID = photo.id;
+  msgs.push(photo);
+  msgs.push(...convo(JID.tyler, [
+    { from: "me", text: "haha nice, where was this", h: 25 },
+    { from: JID.tyler, text: "just the usual spot", h: 24 },
+    { from: JID.tyler, text: "unread one", h: 3 },
+    { from: JID.tyler, text: "unread two \u2014 you around?", h: 2 }
+  ]));
+  return msgs;
+}
+function mariaFiller() {
+  const msgs = [];
+  const lines = [
+    "hola! qu\xE9 tal el finde?",
+    "muy bien, \xBFy t\xFA?",
+    "todo tranquilo por aqu\xED",
+    "genial jaja",
+    "oye, \xBFconfirmamos lo del viaje?",
+    "s\xED s\xED, dame un segundo",
+    "aqu\xED va el Airbnb que encontr\xE9 \u{1F447}"
+  ];
+  for (let i = 0; i < lines.length - 1; i++) {
+    msgs.push(...convo(JID.maria, [{ from: i % 2 === 0 ? JID.maria : "me", text: lines[i], d: 6 - Math.floor(i / 2) }]));
+  }
+  msgs.push(
+    ...convo(JID.maria, [
+      { from: JID.maria, text: "aqu\xED est\xE1 \u2014 here's the Airbnb https://airbnb.com/rooms/demo123456 \u{1F3E0}", d: 2 },
+      { from: "me", text: "se ve genial, lo reservo", h: 40 },
+      { from: JID.maria, text: "perfecto! av\xEDsame cuando est\xE9 confirmado", h: 30 },
+      { from: JID.maria, text: "unread \u2014 \xBFya lo reservaste?", h: 5 }
+    ])
+  );
+  return msgs;
+}
+function familyFiller() {
+  const msgs = [];
+  const lines = [
+    [JID.mom, "buenos d\xEDas familia \u2600\uFE0F", 13],
+    ["me", "morning mom!", 13],
+    [JID.abuela, "\xBFcu\xE1ndo ven\xEDs a comer? \u{1F372}", 11],
+    ["me", "este domingo, abuela", 11],
+    [JID.mom, "perfecto, aviso a todos", 10],
+    [JID.abuela, "qu\xE9 ganas de veros a todos \u{1F970}", 9],
+    ["me", "yo tambi\xE9n!", 9],
+    [JID.mom, "no olvid\xE9is el postre jaja", 7],
+    [JID.abuela, "yo traigo la tarta \u{1F382}", 6],
+    ["me", "perfecto, yo llevo vino", 6],
+    [JID.mom, "aqu\xED va el itinerario del finde", 4]
+  ];
+  for (const [from, text2, d] of lines) {
+    msgs.push(...convo(FAMILY_GROUP_JID, [{ from, text: text2, d }]));
+  }
+  msgs.push(
+    ...convo(FAMILY_GROUP_JID, [
+      { from: JID.mom, text: "itinerario adjunto \u{1F4C4}", d: 3, media: "document", mediaInfo: { mimetype: "application/pdf", filename: "itinerario-familia.pdf" } },
+      { from: JID.abuela, text: "recibido, gracias!", d: 2 },
+      { from: "me", text: "perfecto, nos vemos el domingo \u{1F44B}", d: 1 }
+    ])
+  );
+  return msgs;
+}
+function workFiller() {
+  const msgs = [];
+  const lines = [
+    [JID.diego, "morning team \u2014 launch checklist attached below", 5],
+    ["me", "looks good, reviewing now", 5],
+    [JID.alex, "left a couple comments on the doc", 4],
+    [JID.diego, "thanks, addressing those today", 4],
+    ["me", "QA pass done on my end \u2705", 3],
+    [JID.alex, "same here, all green", 3]
+  ];
+  for (const [from, text2, d] of lines) {
+    msgs.push(...convo(WORK_GROUP_JID, [{ from, text: text2, d }]));
+  }
+  msgs.push(
+    ...convo(WORK_GROUP_JID, [
+      { from: JID.diego, text: "", d: 2, media: "ptt", mediaInfo: { mimetype: "audio/ogg; codecs=opus", filename: "voice-message.ogg", seconds: 14 } },
+      { from: JID.alex, text: "got it, sounds good", h: 20 },
+      { from: JID.diego, text: "unread \u2014 final go/no-go call at 3pm, join if you can", h: 3 },
+      { from: JID.alex, text: "unread \u2014 I'll be there", h: 2 }
+    ])
+  );
+  return msgs;
+}
+function abuelaFiller() {
+  const msgs = [];
+  const lines = [
+    [JID.abuela, "hola mi amor, \xBFc\xF3mo est\xE1s? \u{1F495}", 42],
+    ["me", "muy bien abuela, \xBFy t\xFA?", 42],
+    [JID.abuela, "aqu\xED, disfrutando del jard\xEDn \u{1F337}", 41],
+    ["me", "qu\xE9 bien! te quiero mucho", 40],
+    [JID.abuela, "y yo a ti much\xEDsimo \u{1F970}", 39],
+    [JID.abuela, "av\xEDsame cuando puedas visitarme", 38]
+  ];
+  for (const [from, text2, d] of lines) {
+    msgs.push(...convo(JID.abuela, [{ from, text: text2, d }]));
+  }
+  return msgs;
+}
+function samFiller() {
+  const msgs = [];
+  const lines = [
+    [JID.sam, "hey! long time no talk", 900],
+    ["me", "I know, it's been forever", 899],
+    [JID.sam, "we should catch up sometime", 895],
+    ["me", "for sure, let's find a date", 890],
+    [JID.sam, "how's everything going", 850],
+    ["me", "good, busy but good. you?", 848],
+    [JID.sam, "same here, work's been a lot", 820],
+    ["me", "haha yeah I get that", 818],
+    [JID.sam, "let's not wait another year to talk \u{1F602}", 750],
+    ["me", "deal", 748],
+    [JID.sam, "talk soon!", 731],
+    ["me", "for sure!", 730]
+  ];
+  for (const [from, text2, d] of lines) {
+    msgs.push(...convo(JID.sam, [{ from, text: text2, d }]));
+  }
+  return msgs;
+}
+var MESSAGES = [
+  ...tylerFiller(),
+  ...mariaFiller(),
+  ...familyFiller(),
+  ...workFiller(),
+  ...abuelaFiller(),
+  ...samFiller()
+];
+var CANNED_REPLY = "Demo reply \u2014 Hermeneia is in demo mode, no real messages were sent \u{1F44B}";
+
+// src/demo-bridge.ts
+var log3 = (msg) => console.error(`[hermeneia:demo] ${msg}`);
+var STEP_DELAY_MS = 60;
+var REPLY_DELAY_MS = 2500;
+function isGroupJid(jid) {
+  return jid.endsWith("@g.us");
+}
+function resolveRecipientJid(recipient) {
+  if (recipient.includes("@")) return recipient;
+  const digits = recipient.replace(/[^0-9]/g, "");
+  const match = CONTACTS.find((c) => c.id.startsWith(digits) || digits.endsWith(c.id.split("@")[0].slice(-6)));
+  return match?.id ?? `${digits || "0000000000"}@s.whatsapp.net`;
+}
+var DemoBridge = class extends EventEmitter2 {
+  dataDir;
+  _accountId;
+  _connected = false;
+  _authenticated = false;
+  _displayName = "Demo (not a real account)";
+  _phone = "demo";
+  _lastEventTime = Date.now();
+  heartbeat = null;
+  started = false;
+  constructor(dataDir2, accountId = "default", _logDir = null) {
+    super();
+    this.dataDir = dataDir2;
+    this._accountId = accountId;
+  }
+  get accountId() {
+    return this._accountId;
+  }
+  get displayName() {
+    return this._displayName;
+  }
+  set displayName(name) {
+    if (name) this._displayName = this._displayName ?? name;
+  }
+  get phone() {
+    return this._phone;
+  }
+  set phone(phone) {
+    if (phone) this._phone = this._phone;
+  }
+  get status() {
+    return { connected: this._connected, authenticated: this._authenticated, qr_url: null };
+  }
+  get isConnected() {
+    return this._connected && this._authenticated;
+  }
+  get lastEventTime() {
+    return this._lastEventTime;
+  }
+  get pid() {
+    return null;
+  }
+  get socket() {
+    return null;
+  }
+  setQrPort(_port) {
+  }
+  forceKill(_signal) {
+    this._connected = false;
+  }
+  touch() {
+    this._lastEventTime = Date.now();
+  }
+  async start() {
+    if (this.started) return;
+    this.started = true;
+    log3(`DEMO MODE \u2014 loading fixture data for account "${this._accountId}" (nothing is real)`);
+    this.heartbeat = setInterval(() => this.touch(), 6e4);
+    this.heartbeat.unref?.();
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    this._connected = true;
+    this._authenticated = true;
+    this.touch();
+    this.emit("connected");
+    log3(`Connected (fixture data) \u2014 account "${this._accountId}"`);
+    await wait(STEP_DELAY_MS);
+    this.emit("account_info", { phone: this._phone, name: this._displayName });
+    await wait(STEP_DELAY_MS);
+    for (const c of CONTACTS) {
+      upsertContact(this._accountId, {
+        id: c.id,
+        lid: c.lid,
+        phoneJid: c.phoneJid,
+        name: c.name,
+        notify: c.notify,
+        verifiedName: c.verifiedName
+      });
+      try {
+        mirrorContact(this._accountId, {
+          id: c.id,
+          lid: c.lid,
+          phone_jid: c.phoneJid,
+          name: c.name,
+          notify: c.notify,
+          verified_name: c.verifiedName
+        });
+      } catch {
+      }
+    }
+    log3(`Contacts ready: ${CONTACTS.length} contacts loaded`);
+    await wait(STEP_DELAY_MS);
+    for (const c of CHATS) {
+      upsertChat(this._accountId, c.jid, c.name, c.lastMessageTime, {
+        unreadCount: c.unreadCount,
+        archived: c.archived,
+        parentGroupJid: c.parentGroupJid,
+        isParentGroup: c.isParentGroup
+      });
+      try {
+        mirrorChat(this._accountId, {
+          jid: c.jid,
+          name: c.name,
+          last_message_time: c.lastMessageTime,
+          unread_count: c.unreadCount,
+          archived: c.archived,
+          parent_group_jid: c.parentGroupJid ?? null,
+          is_parent_group: c.isParentGroup
+        });
+      } catch {
+      }
+    }
+    await wait(STEP_DELAY_MS);
+    for (const m of MESSAGES) {
+      const mediaInfo = m.mediaInfo ? JSON.stringify(m.mediaInfo) : null;
+      storeMessage(
+        this._accountId,
+        m.id,
+        m.chatJid,
+        m.sender,
+        m.content,
+        m.timestamp,
+        m.isFromMe,
+        m.mediaType ?? null,
+        null,
+        mediaInfo
+      );
+      try {
+        mirrorMessage(this._accountId, {
+          id: m.id,
+          chat_jid: m.chatJid,
+          sender: m.sender,
+          content: m.content,
+          timestamp: m.timestamp,
+          is_from_me: m.isFromMe,
+          media_type: m.mediaType ?? null,
+          media_info: m.mediaInfo ?? null,
+          filename: m.mediaInfo?.filename ?? null
+        });
+      } catch {
+      }
+    }
+    this.touch();
+    log3(`Loaded ${MESSAGES.length} fixture messages across ${CHATS.length} chats`);
+  }
+  // ── Public actions (called by MCP tools) ───────────────────────
+  async sendMessage(recipient, text2) {
+    const chatJid = resolveRecipientJid(recipient);
+    const id = `demo-sent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+    upsertChat(this._accountId, chatJid, null, timestamp, { unreadCount: 0 });
+    storeMessage(this._accountId, id, chatJid, "me", text2, timestamp, true, null, null, null);
+    this.touch();
+    this.emit("message", {
+      id,
+      chatJid,
+      sender: "me",
+      content: text2,
+      isFromMe: true,
+      timestamp,
+      mediaType: null,
+      pushName: null
+    });
+    if (!isGroupJid(chatJid)) {
+      setTimeout(() => this.sendCannedReply(chatJid), REPLY_DELAY_MS).unref?.();
+    }
+    return { success: true, message: "Sent (demo mode \u2014 not a real WhatsApp message)" };
+  }
+  sendCannedReply(chatJid) {
+    const id = `demo-reply-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+    upsertChat(this._accountId, chatJid, null, timestamp);
+    storeMessage(this._accountId, id, chatJid, chatJid, CANNED_REPLY, timestamp, false, null, null, null);
+    this.touch();
+    this.emit("message", {
+      id,
+      chatJid,
+      sender: chatJid,
+      content: CANNED_REPLY,
+      isFromMe: false,
+      timestamp,
+      mediaType: null,
+      pushName: "Demo"
+    });
+  }
+  async sendFile(recipient, _filePath, _caption) {
+    return this.sendMessage(recipient, "[demo file attachment]");
+  }
+  async downloadMedia(messageId, _chatJid, _mediaInfo, _saveDir) {
+    if (messageId === DEMO_PHOTO_MESSAGE_ID) {
+      return { success: true, message: DEMO_PHOTO_PATH };
+    }
+    return {
+      success: false,
+      message: "Demo mode only bundles real media bytes for one sample photo. This message's media isn't backed by an actual file."
+    };
+  }
+  async stop() {
+    if (this.heartbeat) clearInterval(this.heartbeat);
+    this.heartbeat = null;
+    this._connected = false;
+  }
+};
+
 // src/qr-server.ts
 var import_qrcode = __toESM(require_lib(), 1);
 import { createServer } from "http";
 import { existsSync as existsSync2, readFileSync as readFileSync2 } from "fs";
-import { join as join3 } from "path";
-var log3 = (msg) => console.error(`[hermeneia:qr] ${msg}`);
+import { join as join4 } from "path";
+var log4 = (msg) => console.error(`[hermeneia:qr] ${msg}`);
 var server = null;
 var sessions = /* @__PURE__ */ new Map();
 var autoOpenedAccounts = /* @__PURE__ */ new Set();
@@ -29620,7 +30158,7 @@ async function applyQR(accountId, qrString) {
     const session = sessions.get(accountId);
     if (session) session.qrDataUrl = dataUrl;
   } catch (err) {
-    log3(`QR generation error: ${err}`);
+    log4(`QR generation error: ${err}`);
   }
 }
 function startQRServer(bridge, port = 3456, initialQr, dataDir2, accountId = "default") {
@@ -29688,23 +30226,25 @@ function startQRServer(bridge, port = 3456, initialQr, dataDir2, accountId = "de
     });
     server.on("error", (err) => {
       if (err.code === "EADDRINUSE") {
-        log3(`Port ${port} in use, trying ${port + 1}`);
+        log4(`Port ${port} in use, trying ${port + 1}`);
         server?.listen(port + 1);
       } else {
-        log3(`QR server error: ${err.message}`);
+        log4(`QR server error: ${err.message}`);
       }
     });
     server.listen(port, () => {
       const actualPort = server?.address()?.port ?? port;
-      log3(`Setup page: http://localhost:${actualPort}/setup`);
+      log4(`Setup page: http://localhost:${actualPort}/setup`);
     });
   }
   let hasExistingAuth = false;
   try {
-    const accountsPath = join3(dataDir2, "..", "accounts.json");
-    if (existsSync2(accountsPath)) {
-      const accounts = JSON.parse(readFileSync2(accountsPath, "utf-8"));
-      hasExistingAuth = accounts.some((a) => a.id === accountId && a.phone);
+    if (dataDir2) {
+      const accountsPath = join4(dataDir2, "..", "accounts.json");
+      if (existsSync2(accountsPath)) {
+        const accounts = JSON.parse(readFileSync2(accountsPath, "utf-8"));
+        hasExistingAuth = accounts.some((a) => a.id === accountId && a.phone);
+      }
     }
   } catch {
   }
@@ -29716,9 +30256,9 @@ function startQRServer(bridge, port = 3456, initialQr, dataDir2, accountId = "de
       openBrowser(setupUrl);
     }, 500);
   } else if (hasExistingAuth) {
-    log3(`QR generated during reconnect for "${accountId}" \u2014 not auto-opening browser`);
+    log4(`QR generated during reconnect for "${accountId}" \u2014 not auto-opening browser`);
   } else {
-    log3(`QR regenerated for "${accountId}" \u2014 setup page already open, not reopening`);
+    log4(`QR regenerated for "${accountId}" \u2014 setup page already open, not reopening`);
   }
 }
 function stopQRServer() {
@@ -29726,7 +30266,7 @@ function stopQRServer() {
     server.close();
     server = null;
     sessions.clear();
-    log3("QR server stopped");
+    log4("QR server stopped");
   }
 }
 async function openBrowser(url2) {
@@ -29734,30 +30274,72 @@ async function openBrowser(url2) {
     const open2 = (await Promise.resolve().then(() => (init_open(), open_exports))).default;
     await open2(url2);
   } catch {
-    log3(`Open ${url2} in your browser to connect WhatsApp`);
+    log4(`Open ${url2} in your browser to connect WhatsApp`);
   }
 }
 
 // src/notify.ts
 import { spawn as spawn2 } from "child_process";
-function notify(title, body) {
-  if (process.platform !== "darwin") return;
+var log5 = (msg) => console.error(`[hermeneia:notify] ${msg}`);
+function notifyMac(title, body) {
   const esc2 = (s) => s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const proc = spawn2(
+    "osascript",
+    ["-e", `display notification "${esc2(body)}" with title "${esc2(title)}"`],
+    { stdio: "ignore", detached: true }
+  );
+  proc.on("error", () => {
+  });
+  proc.unref();
+}
+function notifyWindows(title, body) {
+  const esc2 = (s) => s.replace(/'/g, "''");
+  const script = `[void][System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms');$n = New-Object System.Windows.Forms.NotifyIcon;$n.Icon = [System.Drawing.SystemIcons]::Information;$n.BalloonTipTitle = '${esc2(title)}';$n.BalloonTipText = '${esc2(body)}';$n.Visible = $true;$n.ShowBalloonTip(10000);Start-Sleep -Seconds 10;$n.Dispose()`;
+  const proc = spawn2(
+    "powershell",
+    ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script],
+    { stdio: "ignore", detached: true }
+  );
+  proc.on("error", () => {
+  });
+  proc.unref();
+}
+function notifyLinux(title, body) {
+  if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) return;
+  const proc = spawn2("notify-send", ["--app-name=Hermeneia", title, body], {
+    stdio: "ignore",
+    detached: true
+  });
+  proc.on("error", () => {
+  });
+  proc.unref();
+}
+function notify(title, body) {
+  log5(`${title} \u2014 ${body}`);
   try {
-    const proc = spawn2(
-      "osascript",
-      ["-e", `display notification "${esc2(body)}" with title "${esc2(title)}"`],
-      { stdio: "ignore", detached: true }
-    );
-    proc.on("error", () => {
-    });
-    proc.unref();
+    switch (process.platform) {
+      case "darwin":
+        notifyMac(title, body);
+        break;
+      case "win32":
+        notifyWindows(title, body);
+        break;
+      case "linux":
+        notifyLinux(title, body);
+        break;
+    }
   } catch {
   }
 }
 
 // src/bridge-manager.ts
-var log4 = (msg) => console.error(`[hermeneia:manager] ${msg}`);
+var log6 = (msg) => console.error(`[hermeneia:manager] ${msg}`);
+function isDemoMode() {
+  const v = (process.env.HERMENEIA_DEMO ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
+var DEMO_MODE = isDemoMode();
+var Bridge = DEMO_MODE ? DemoBridge : WhatsAppBridge;
 var BridgeManager = class {
   bridges = /* @__PURE__ */ new Map();
   dataDir;
@@ -29765,6 +30347,11 @@ var BridgeManager = class {
   onMessage;
   watchdogTimer = null;
   shuttingDown = false;
+  // Accounts in a persistent dead state (logged out / gave up). Set when the
+  // state is entered, cleared on a successful (re)connect. Read by the MCP
+  // tools so a headless host — where desktop notifications reach nobody —
+  // still surfaces the problem in the chat instead of returning stale data.
+  degraded = /* @__PURE__ */ new Map();
   // Tracks exponential-backoff delay per account id for respawn attempts.
   respawnBackoff = /* @__PURE__ */ new Map();
   // Consecutive failed respawns without a successful "connected" event in between.
@@ -29783,35 +30370,35 @@ var BridgeManager = class {
     this.respawnCap = parseInt(process.env.HERMENEIA_RESPAWN_CAP ?? "5", 10);
   }
   logDirPath() {
-    return join4(this.dataDir, "logs");
+    return join5(this.dataDir, "logs");
   }
   setMessageHandler(handler) {
     this.onMessage = handler;
   }
   /** Migrate old flat data layout to accounts/ subdirectory */
   migrateOldLayout() {
-    const oldWhatsmeow = join4(this.dataDir, "whatsmeow.db");
-    const accountsDir = join4(this.dataDir, "accounts");
-    const defaultDir = join4(accountsDir, "default");
+    const oldWhatsmeow = join5(this.dataDir, "whatsmeow.db");
+    const accountsDir = join5(this.dataDir, "accounts");
+    const defaultDir = join5(accountsDir, "default");
     if (!existsSync3(oldWhatsmeow)) return;
-    if (existsSync3(join4(defaultDir, "whatsmeow.db"))) return;
-    log4("Migrating old single-account layout to accounts/default/...");
+    if (existsSync3(join5(defaultDir, "whatsmeow.db"))) return;
+    log6("Migrating old single-account layout to accounts/default/...");
     mkdirSync3(defaultDir, { recursive: true });
-    renameSync(oldWhatsmeow, join4(defaultDir, "whatsmeow.db"));
-    const oldAuth = join4(this.dataDir, "auth");
+    renameSync(oldWhatsmeow, join5(defaultDir, "whatsmeow.db"));
+    const oldAuth = join5(this.dataDir, "auth");
     if (existsSync3(oldAuth)) {
-      cpSync(oldAuth, join4(defaultDir, "auth"), { recursive: true });
+      cpSync(oldAuth, join5(defaultDir, "auth"), { recursive: true });
     }
     this.saveAccounts([{ id: "default", name: null, phone: null }]);
-    log4("Migration complete");
+    log6("Migration complete");
   }
   /** Start all saved accounts */
   async startup() {
     this.migrateOldLayout();
     const accounts = this.loadAccounts();
     if (accounts.length === 0) {
-      log4("No accounts found, creating default account...");
-      await this.addAccount("default");
+      log6("No accounts found, creating default account...");
+      await this.addAccount("default", true);
       return;
     }
     for (const account of accounts) {
@@ -29823,7 +30410,7 @@ var BridgeManager = class {
     if (this.watchdogTimer) return;
     this.watchdogTimer = setInterval(() => this.watchdogTick(), this.watchdogCheckMs);
     this.watchdogTimer.unref?.();
-    log4(
+    log6(
       `Watchdog started \u2014 check every ${Math.round(this.watchdogCheckMs / 1e3)}s, timeout ${Math.round(this.watchdogTimeoutMs / 1e3)}s`
     );
   }
@@ -29838,7 +30425,7 @@ var BridgeManager = class {
         });
       }
       if (idle > this.watchdogTimeoutMs) {
-        log4(
+        log6(
           `Watchdog: no events from "${id}" for ${Math.round(idle / 1e3)}s \u2014 killing PID ${bridge.pid ?? "?"} and respawning`
         );
         bridge.forceKill("SIGKILL");
@@ -29846,11 +30433,18 @@ var BridgeManager = class {
     }
   }
   /** Add and start a new account */
-  async addAccount(id) {
+  /** bootstrap=true is the internal first-run call from startup(), which must
+   *  still be allowed to create demo mode's own single fixture account. */
+  async addAccount(id, bootstrap = false) {
+    if (DEMO_MODE && !bootstrap) {
+      throw new Error(
+        "Demo mode only supports a single fixture account. Unset HERMENEIA_DEMO (or turn off the Demo mode setting) and restart to connect a real WhatsApp account."
+      );
+    }
     if (this.bridges.has(id)) {
       throw new Error(`Account "${id}" already exists`);
     }
-    const accountDir = join4(this.dataDir, "accounts", id);
+    const accountDir = join5(this.dataDir, "accounts", id);
     mkdirSync3(accountDir, { recursive: true });
     await this.startBridge(id, null, null);
     const accounts = this.loadAccounts();
@@ -29869,13 +30463,13 @@ var BridgeManager = class {
     this.bridges.delete(id);
     const accounts = this.loadAccounts().filter((a) => a.id !== id);
     this.saveAccounts(accounts);
-    log4(`Removed account: ${id}`);
+    log6(`Removed account: ${id}`);
     return true;
   }
   async startBridge(id, name, phone) {
-    const accountDir = join4(this.dataDir, "accounts", id);
+    const accountDir = join5(this.dataDir, "accounts", id);
     mkdirSync3(accountDir, { recursive: true });
-    const bridge = new WhatsAppBridge(accountDir, id, this.logDirPath());
+    const bridge = new Bridge(accountDir, id, this.logDirPath());
     bridge.setQrPort(this.qrPort);
     bridge.displayName = name;
     bridge.phone = phone;
@@ -29883,17 +30477,25 @@ var BridgeManager = class {
       startQRServer(bridge, this.qrPort, qr, accountDir, id);
     });
     bridge.on("connected", () => {
-      log4(`Account "${id}" connected`);
+      log6(`Account "${id}" connected`);
       this.updateAccountInfo(id, bridge.displayName, bridge.phone);
       this.consecutiveFailures.delete(id);
       this.respawnBackoff.delete(id);
+      this.degraded.delete(id);
     });
     bridge.on("logged_out", () => {
-      log4(`Account "${id}" was logged out by WhatsApp \u2014 re-scan required`);
+      log6(`Account "${id}" was logged out by WhatsApp \u2014 re-scan required`);
       this.clearAuthState(id);
+      const setupUrl = `http://localhost:${this.qrPort}/setup/${id}`;
+      this.degraded.set(id, {
+        id,
+        reason: "logged_out",
+        message: `WhatsApp logged out account "${id}". Open ${setupUrl} on the host running Hermeneia and re-scan the QR code to reconnect.`,
+        setupUrl
+      });
       notify(
         "WhatsApp session expired",
-        `Account "${id}" was logged out. Open http://localhost:${this.qrPort}/setup/${id} to re-scan.`
+        `Account "${id}" was logged out. Open ${setupUrl} to re-scan.`
       );
       bridge.forceKill("SIGTERM");
     });
@@ -29904,7 +30506,7 @@ var BridgeManager = class {
       this.onMessage?.(id, msg);
     });
     bridge.on("error", (err) => {
-      log4(`Bridge error (${id}): ${err.message}`);
+      log6(`Bridge error (${id}): ${err.message}`);
     });
     bridge.on("exit", () => {
       if (this.shuttingDown) return;
@@ -29913,9 +30515,9 @@ var BridgeManager = class {
     this.bridges.set(id, bridge);
     try {
       await bridge.start();
-      log4(`Started bridge for account: ${id}`);
+      log6(`Started bridge for account: ${id}`);
     } catch (err) {
-      log4(`Failed to start bridge for account "${id}": ${err.message}`);
+      log6(`Failed to start bridge for account "${id}": ${err.message}`);
       this.bridges.delete(id);
       if (!this.shuttingDown) this.scheduleRespawn(id, name, phone);
     }
@@ -29925,9 +30527,18 @@ var BridgeManager = class {
     const failures = (this.consecutiveFailures.get(id) ?? 0) + 1;
     this.consecutiveFailures.set(id, failures);
     if (failures > this.respawnCap) {
-      log4(
+      log6(
         `Giving up on "${id}" after ${failures - 1} consecutive respawn failures. Check logs (data/logs/bridge-${id}.log), then restart Hermeneia to retry.`
       );
+      const setupUrl = `http://localhost:${this.qrPort}/setup/${id}`;
+      if (!this.degraded.has(id)) {
+        this.degraded.set(id, {
+          id,
+          reason: "gave_up",
+          message: `WhatsApp account "${id}" won't stay connected (${failures - 1} failed retries). It likely needs a re-scan: open ${setupUrl} on the host, or check data/logs/bridge-${id}.log, then restart Hermeneia.`,
+          setupUrl
+        });
+      }
       notify(
         "Hermeneia: WhatsApp bridge failed",
         `Account "${id}" won't stay connected (${failures - 1} retries). Likely needs a re-scan \u2014 see check_status.`
@@ -29938,7 +30549,7 @@ var BridgeManager = class {
     const prev = this.respawnBackoff.get(id) ?? 0;
     const delay = prev === 0 ? 5e3 : Math.min(prev * 2, 3e4);
     this.respawnBackoff.set(id, delay);
-    log4(
+    log6(
       `Scheduling respawn of "${id}" in ${Math.round(delay / 1e3)}s (attempt ${failures}/${this.respawnCap})`
     );
     setTimeout(() => {
@@ -29948,7 +30559,7 @@ var BridgeManager = class {
       const p = saved?.phone ?? phone;
       this.bridges.delete(id);
       this.startBridge(id, n, p).catch((err) => {
-        log4(`Respawn of "${id}" failed: ${err?.message ?? err}`);
+        log6(`Respawn of "${id}" failed: ${err?.message ?? err}`);
       });
     }, delay).unref?.();
   }
@@ -29982,6 +30593,33 @@ var BridgeManager = class {
   }
   getConnectedIds() {
     return Array.from(this.bridges.entries()).filter(([_, b]) => b.isConnected).map(([id]) => id);
+  }
+  /** Accounts in a persistent dead state that needs the user to act. */
+  getDegradedAccounts() {
+    return Array.from(this.degraded.values());
+  }
+  /** The dead-state entry for a specific account, if any. */
+  getDegraded(accountId) {
+    return this.degraded.get(accountId);
+  }
+  /** Actionable message if the given target is in a dead state and would
+   *  otherwise return stale/empty data. With an explicit accountId, checks
+   *  just that account. With none, only fires when EVERY known account is
+   *  degraded (so a healthy account in a multi-account setup still serves
+   *  reads). Returns null when there's nothing to warn about — including
+   *  always in demo mode, which never degrades. */
+  degradedWarning(accountId) {
+    if (accountId) {
+      return this.degraded.get(accountId)?.message ?? null;
+    }
+    if (this.degraded.size === 0) return null;
+    const known = /* @__PURE__ */ new Set([
+      ...this.bridges.keys(),
+      ...this.loadAccounts().map((a) => a.id)
+    ]);
+    const allDegraded = [...known].length > 0 && [...known].every((id) => this.degraded.has(id));
+    if (!allDegraded) return null;
+    return this.getDegradedAccounts().map((d) => d.message).join(" ");
   }
   /** Get bridge for sending. Errors if ambiguous (>1 connected, no id specified). */
   resolveForSend(accountId) {
@@ -30023,7 +30661,7 @@ var BridgeManager = class {
       this.watchdogTimer = null;
     }
     for (const [id, bridge] of this.bridges) {
-      log4(`Stopping bridge: ${id}`);
+      log6(`Stopping bridge: ${id}`);
       await bridge.stop();
     }
     this.bridges.clear();
@@ -30035,7 +30673,7 @@ var BridgeManager = class {
   }
   // ── Persistence ──────────────────────────────────────────────────
   accountsPath() {
-    return join4(this.dataDir, "accounts.json");
+    return join5(this.dataDir, "accounts.json");
   }
   loadAccounts() {
     const path2 = this.accountsPath();
@@ -30065,6 +30703,16 @@ function registerTools(server2, manager) {
     async (request) => {
       const { name, arguments: args } = request.params;
       const accountId = args?.account;
+      const DEAD_STATE_EXEMPT = /* @__PURE__ */ new Set([
+        "check_status",
+        "list_accounts",
+        "add_account",
+        "remove_account"
+      ]);
+      if (!DEAD_STATE_EXEMPT.has(name)) {
+        const warning = manager.degradedWarning(accountId);
+        if (warning) return text(`\u26A0\uFE0F ${warning}`);
+      }
       switch (name) {
         // ── Account management ───────────────────────────────────────
         case "list_accounts": {
@@ -30094,13 +30742,24 @@ function registerTools(server2, manager) {
         case "check_status": {
           const accounts = manager.getAllAccountInfo();
           const connected = accounts.filter((a) => a.connected);
+          const degraded = manager.getDegradedAccounts();
           if (connected.length > 0) {
             const diagnostics = accountId ? [getStoreDiagnostics(accountId)] : accounts.map((a) => getStoreDiagnostics(a.id));
+            const demoMode = isDemoMode();
             return json2({
               status: "connected",
-              message: `${connected.length} account(s) connected.`,
+              message: demoMode ? "DEMO MODE \u2014 fixture data, not connected to WhatsApp." : `${connected.length} account(s) connected.`,
               accounts,
-              store: diagnostics
+              store: diagnostics,
+              ...degraded.length > 0 ? { needs_attention: degraded } : {}
+            });
+          }
+          if (degraded.length > 0) {
+            return json2({
+              status: "needs_attention",
+              message: degraded.map((d) => d.message).join(" "),
+              needs_attention: degraded,
+              accounts
             });
           }
           const pending = accounts.find((a) => !a.connected);
@@ -30731,23 +31390,23 @@ function guessMime(filePath) {
 
 // src/lockfile.ts
 import { readFileSync as readFileSync5, writeFileSync as writeFileSync3, unlinkSync, existsSync as existsSync4, mkdirSync as mkdirSync4 } from "fs";
-import { join as join5 } from "path";
-var log5 = (msg) => console.error(`[hermeneia:lock] ${msg}`);
+import { join as join6 } from "path";
+var log7 = (msg) => console.error(`[hermeneia:lock] ${msg}`);
 var lockPath = null;
 function acquireLock(dataDir2) {
   mkdirSync4(dataDir2, { recursive: true });
-  lockPath = join5(dataDir2, "hermeneia.pid");
+  lockPath = join6(dataDir2, "hermeneia.pid");
   if (existsSync4(lockPath)) {
     const raw = readFileSync5(lockPath, "utf-8").trim();
     const pid = parseInt(raw, 10);
     if (pid > 0 && isAlive(pid)) {
-      log5(`Another Hermeneia is already running (PID ${pid}) \u2014 exiting cleanly.`);
+      log7(`Another Hermeneia is already running (PID ${pid}) \u2014 exiting cleanly.`);
       return false;
     }
-    log5(`Stale lock (PID ${raw}) \u2014 taking over.`);
+    log7(`Stale lock (PID ${raw}) \u2014 taking over.`);
   }
   writeFileSync3(lockPath, String(process.pid));
-  log5(`Lock acquired (PID ${process.pid})`);
+  log7(`Lock acquired (PID ${process.pid})`);
   const release = () => {
     try {
       if (lockPath && existsSync4(lockPath)) {
@@ -30780,47 +31439,47 @@ function isAlive(pid) {
 }
 
 // src/index.ts
-var __dirname5 = dirname3(fileURLToPath4(import.meta.url));
-var log6 = (msg) => console.error(`[hermeneia] ${msg}`);
+var __dirname6 = dirname4(fileURLToPath5(import.meta.url));
+var log8 = (msg) => console.error(`[hermeneia] ${msg}`);
 function getDataDir() {
   if (process.env.HERMENEIA_DATA_DIR) return process.env.HERMENEIA_DATA_DIR;
   if (process.env.WHATSAPP_DATA_DIR) return process.env.WHATSAPP_DATA_DIR;
   if (process.platform === "darwin") {
-    return join6(homedir(), "Library", "Application Support", "Hermeneia");
+    return join7(homedir(), "Library", "Application Support", "Hermeneia");
   } else if (process.platform === "win32") {
-    return join6(process.env.APPDATA ?? join6(homedir(), "AppData", "Roaming"), "Hermeneia");
+    return join7(process.env.APPDATA ?? join7(homedir(), "AppData", "Roaming"), "Hermeneia");
   }
-  return join6(homedir(), ".hermeneia");
+  return join7(homedir(), ".hermeneia");
 }
 var dataDir = getDataDir();
 function migrateOldDataDir() {
-  const oldDir = join6(__dirname5, "..", "data");
+  const oldDir = join7(__dirname6, "..", "data");
   if (oldDir === dataDir) return;
   if (!existsSync5(oldDir)) return;
-  if (existsSync5(join6(dataDir, "accounts.json"))) return;
-  log6(`Migrating data from ${oldDir} to ${dataDir}`);
+  if (existsSync5(join7(dataDir, "accounts.json"))) return;
+  log8(`Migrating data from ${oldDir} to ${dataDir}`);
   mkdirSync5(dataDir, { recursive: true });
   cpSync2(oldDir, dataDir, { recursive: true });
-  log6("Data migration complete");
+  log8("Data migration complete");
 }
 var qrPort = parseInt(process.env.HERMENEIA_QR_PORT ?? "3456", 10);
 async function main() {
-  log6("Starting Hermeneia...");
+  log8("Starting Hermeneia...");
   migrateOldDataDir();
-  log6(`Data directory: ${dataDir}`);
+  log8(`Data directory: ${dataDir}`);
   if (!acquireLock(dataDir)) {
     await new Promise((resolve) => setTimeout(resolve, 2e3));
     process.exit(0);
   }
   await initStore(dataDir);
-  log6("Message store ready");
+  log8("Message store ready");
   const mirrorInfo = initMirror();
-  log6(`Epistole mirror: ${mirrorInfo.info}`);
+  log8(`Epistole mirror: ${mirrorInfo.info}`);
   const manager = new BridgeManager(dataDir, qrPort);
   manager.setMessageHandler((accountId, msg) => {
     const dir = msg.isFromMe ? "\u2192" : "\u2190";
     const preview = msg.content?.substring(0, 60) ?? "[media]";
-    log6(`[${accountId}] ${dir} ${msg.sender}: ${preview}`);
+    log8(`[${accountId}] ${dir} ${msg.sender}: ${preview}`);
   });
   await manager.startup();
   const mcpServer = new Server(
@@ -30838,9 +31497,9 @@ async function main() {
   registerTools(mcpServer, manager);
   const transport = new StdioServerTransport();
   await mcpServer.connect(transport);
-  log6("MCP server running on stdio");
+  log8("MCP server running on stdio");
   const shutdown = async () => {
-    log6("Shutting down...");
+    log8("Shutting down...");
     stopQRServer();
     await manager.stopAll();
     await mcpServer.close();

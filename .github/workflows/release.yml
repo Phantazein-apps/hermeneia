@@ -8,6 +8,8 @@ permissions:
   contents: write
 
 jobs:
+  # The Go bridge is pure Go (modernc.org/sqlite, CGO disabled), so every
+  # target cross-compiles from a single runner — no per-OS matrix needed.
   build-and-release:
     runs-on: ubuntu-latest
     steps:
@@ -17,17 +19,55 @@ jobs:
         with:
           node-version: "20"
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: go-bridge/go.sum
+
       - run: npm ci
 
-      - run: npm run build
+      # 1. Bundle the TS/MCP layer (index.js + sql-wasm.wasm), no Go build.
+      - run: npm run build:ts
 
-      # Package .mcpb
+      # 2. Cross-compile the bridge for every supported target into dist/.
+      - name: Build bridge binaries (all platforms)
+        working-directory: go-bridge
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          build() {
+            local goos=$1 goarch=$2 ext=${3:-}
+            echo "Building $goos/$goarch..."
+            GOOS=$goos GOARCH=$goarch go build -trimpath -ldflags="-s -w" \
+              -o "../dist/hermeneia-bridge-${goos}-${goarch}${ext}" .
+          }
+          build darwin  arm64
+          build darwin  amd64
+          build linux   amd64
+          build linux   arm64
+          build windows amd64 .exe
+          ls -la ../dist/
+
+      # 3. Pack the .mcpb — .mcpbignore trims it to darwin-arm64 + windows-amd64,
+      #    the two platforms Claude Desktop runs on.
       - run: npx @anthropic-ai/mcpb pack
       - run: npx @anthropic-ai/mcpb validate dist/hermeneia.mcpb || true
+
+      # 4. Tar the standalone bridge binaries for non-mcpb users
+      #    (Refugio / Linux / Intel-mac / build-from-source).
+      - name: Tar standalone bridge binaries
+        run: |
+          cd dist
+          for f in hermeneia-bridge-*; do
+            [ -e "$f" ] || continue
+            tar czf "${f}.tar.gz" "$f"
+          done
 
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/hermeneia.mcpb
+            dist/hermeneia-bridge-*.tar.gz
           generate_release_notes: true

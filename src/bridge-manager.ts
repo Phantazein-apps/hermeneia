@@ -6,6 +6,7 @@
 import { mkdirSync, existsSync, readFileSync, writeFileSync, renameSync, cpSync } from "fs";
 import { join } from "path";
 import { WhatsAppBridge } from "./bridge.js";
+import { DemoBridge } from "./demo-bridge.js";
 import { startQRServer, stopQRServer } from "./qr-server.js";
 import { isMirrorEnabled, mirrorHeartbeat, flushAll as flushMirror } from "./mirror.js";
 import { notify } from "./notify.js";
@@ -13,10 +14,36 @@ import type { AccountInfo } from "./types.js";
 
 const log = (msg: string) => console.error(`[hermeneia:manager] ${msg}`);
 
+// Accept a few truthy spellings since the Claude Desktop extension setting
+// is a boolean user_config value substituted into this env var as a string
+// — "1" for the documented env-var usage, "true" in case the host
+// serializes booleans that way instead.
+export function isDemoMode(): boolean {
+  const v = (process.env.HERMENEIA_DEMO ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
+
+const DEMO_MODE = isDemoMode();
+// Same public surface as WhatsAppBridge (constructor, start(), send/command
+// methods, EventEmitter events) — see demo-bridge.ts. Selecting the class
+// here is the only place demo mode changes bridge-manager's behavior.
+const Bridge: typeof WhatsAppBridge = DEMO_MODE ? (DemoBridge as unknown as typeof WhatsAppBridge) : WhatsAppBridge;
+
 interface AccountEntry {
   id: string;
   name: string | null;
   phone: string | null;
+}
+
+/** An account that was authenticated but is now in a persistent dead state
+ *  the system can't recover from on its own — the user must act. Distinct
+ *  from a transient reconnect (watchdog respawn) or a never-authenticated
+ *  account still waiting for its first QR scan. */
+export interface DegradedAccount {
+  id: string;
+  reason: "logged_out" | "gave_up";
+  message: string;
+  setupUrl: string;
 }
 
 export class BridgeManager {
@@ -26,6 +53,11 @@ export class BridgeManager {
   private onMessage?: (accountId: string, msg: any) => void;
   private watchdogTimer: NodeJS.Timeout | null = null;
   private shuttingDown = false;
+  // Accounts in a persistent dead state (logged out / gave up). Set when the
+  // state is entered, cleared on a successful (re)connect. Read by the MCP
+  // tools so a headless host — where desktop notifications reach nobody —
+  // still surfaces the problem in the chat instead of returning stale data.
+  private degraded = new Map<string, DegradedAccount>();
   // Tracks exponential-backoff delay per account id for respawn attempts.
   private respawnBackoff = new Map<string, number>();
   // Consecutive failed respawns without a successful "connected" event in between.
@@ -88,7 +120,7 @@ export class BridgeManager {
     if (accounts.length === 0) {
       // First run — create default account
       log("No accounts found, creating default account...");
-      await this.addAccount("default");
+      await this.addAccount("default", true);
       return;
     }
 
@@ -135,7 +167,15 @@ export class BridgeManager {
   }
 
   /** Add and start a new account */
-  async addAccount(id: string): Promise<{ setupUrl: string }> {
+  /** bootstrap=true is the internal first-run call from startup(), which must
+   *  still be allowed to create demo mode's own single fixture account. */
+  async addAccount(id: string, bootstrap = false): Promise<{ setupUrl: string }> {
+    if (DEMO_MODE && !bootstrap) {
+      throw new Error(
+        "Demo mode only supports a single fixture account. Unset HERMENEIA_DEMO " +
+          "(or turn off the Demo mode setting) and restart to connect a real WhatsApp account."
+      );
+    }
     if (this.bridges.has(id)) {
       throw new Error(`Account "${id}" already exists`);
     }
@@ -176,7 +216,7 @@ export class BridgeManager {
     const accountDir = join(this.dataDir, "accounts", id);
     mkdirSync(accountDir, { recursive: true });
 
-    const bridge = new WhatsAppBridge(accountDir, id, this.logDirPath());
+    const bridge = new Bridge(accountDir, id, this.logDirPath());
     bridge.setQrPort(this.qrPort);
     bridge.displayName = name;
     bridge.phone = phone;
@@ -192,15 +232,24 @@ export class BridgeManager {
       // Reset respawn counters on successful connect
       this.consecutiveFailures.delete(id);
       this.respawnBackoff.delete(id);
+      // A live connection clears any prior dead-state flag.
+      this.degraded.delete(id);
     });
 
     bridge.on("logged_out", () => {
       log(`Account "${id}" was logged out by WhatsApp — re-scan required`);
       // Clear the saved phone so the QR server auto-opens the browser on next QR.
       this.clearAuthState(id);
+      const setupUrl = `http://localhost:${this.qrPort}/setup/${id}`;
+      this.degraded.set(id, {
+        id,
+        reason: "logged_out",
+        message: `WhatsApp logged out account "${id}". Open ${setupUrl} on the host running Hermeneia and re-scan the QR code to reconnect.`,
+        setupUrl,
+      });
       notify(
         "WhatsApp session expired",
-        `Account "${id}" was logged out. Open http://localhost:${this.qrPort}/setup/${id} to re-scan.`
+        `Account "${id}" was logged out. Open ${setupUrl} to re-scan.`
       );
       // Force-kill so the Go bridge restarts and emits a fresh QR.
       bridge.forceKill("SIGTERM");
@@ -250,6 +299,17 @@ export class BridgeManager {
         `Giving up on "${id}" after ${failures - 1} consecutive respawn failures. ` +
           `Check logs (data/logs/bridge-${id}.log), then restart Hermeneia to retry.`
       );
+      const setupUrl = `http://localhost:${this.qrPort}/setup/${id}`;
+      // Only flag as degraded if it isn't already flagged as logged_out —
+      // that reason is more specific and actionable.
+      if (!this.degraded.has(id)) {
+        this.degraded.set(id, {
+          id,
+          reason: "gave_up",
+          message: `WhatsApp account "${id}" won't stay connected (${failures - 1} failed retries). It likely needs a re-scan: open ${setupUrl} on the host, or check data/logs/bridge-${id}.log, then restart Hermeneia.`,
+          setupUrl,
+        });
+      }
       notify(
         "Hermeneia: WhatsApp bridge failed",
         `Account "${id}" won't stay connected (${failures - 1} retries). Likely needs a re-scan — see check_status.`
@@ -318,6 +378,38 @@ export class BridgeManager {
     return Array.from(this.bridges.entries())
       .filter(([_, b]) => b.isConnected)
       .map(([id]) => id);
+  }
+
+  /** Accounts in a persistent dead state that needs the user to act. */
+  getDegradedAccounts(): DegradedAccount[] {
+    return Array.from(this.degraded.values());
+  }
+
+  /** The dead-state entry for a specific account, if any. */
+  getDegraded(accountId: string): DegradedAccount | undefined {
+    return this.degraded.get(accountId);
+  }
+
+  /** Actionable message if the given target is in a dead state and would
+   *  otherwise return stale/empty data. With an explicit accountId, checks
+   *  just that account. With none, only fires when EVERY known account is
+   *  degraded (so a healthy account in a multi-account setup still serves
+   *  reads). Returns null when there's nothing to warn about — including
+   *  always in demo mode, which never degrades. */
+  degradedWarning(accountId?: string): string | null {
+    if (accountId) {
+      return this.degraded.get(accountId)?.message ?? null;
+    }
+    if (this.degraded.size === 0) return null;
+    const known = new Set([
+      ...this.bridges.keys(),
+      ...this.loadAccounts().map((a) => a.id),
+    ]);
+    const allDegraded = [...known].length > 0 && [...known].every((id) => this.degraded.has(id));
+    if (!allDegraded) return null;
+    return this.getDegradedAccounts()
+      .map((d) => d.message)
+      .join(" ");
   }
 
   /** Get bridge for sending. Errors if ambiguous (>1 connected, no id specified). */
