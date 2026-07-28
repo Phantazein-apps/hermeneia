@@ -17,14 +17,6 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
   if (typeof require !== "undefined") return require.apply(this, arguments);
   throw Error('Dynamic require of "' + x + '" is not supported');
 });
-var __esm = (fn, res, err) => function __init() {
-  if (err) throw err[0];
-  try {
-    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
-  } catch (e) {
-    throw err = [e], e;
-  }
-};
 var __commonJS = (cb, mod) => function __require2() {
   try {
     return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
@@ -3249,8 +3241,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path2) {
-      let input = path2;
+    function removeDotSegments(path) {
+      let input = path;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3502,8 +3494,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path2, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path2 && path2 !== "/" ? path2 : void 0;
+        const [path, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path && path !== "/" ? path : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -6902,12 +6894,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs6, exportName) {
+    function addFormats(ajv, list, fs, exportName) {
       var _a2;
       var _b;
       (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 ? _a2 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs6[f]);
+        ajv.addFormat(f, fs[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -7447,15 +7439,15 @@ var require_sql_wasm = __commonJS({
         "undefined" != typeof __filename ? ya = __filename : ba && (ya = self.location.href);
         var za = "", Aa, Ba;
         if (ca) {
-          var fs6 = __require("node:fs");
+          var fs = __require("node:fs");
           za = __dirname + "/";
           Ba = (a) => {
             a = Ca(a) ? new URL(a) : a;
-            return fs6.readFileSync(a);
+            return fs.readFileSync(a);
           };
           Aa = async (a) => {
             a = Ca(a) ? new URL(a) : a;
-            return fs6.readFileSync(a, void 0);
+            return fs.readFileSync(a, void 0);
           };
           1 < process.argv.length && (wa = process.argv[1].replace(/\\/g, "/"));
           process.argv.slice(2);
@@ -7737,7 +7729,7 @@ var require_sql_wasm = __commonJS({
               if (ca) {
                 var b = Buffer.alloc(256), c = 0, d = process.stdin.fd;
                 try {
-                  c = fs6.readSync(d, b, 0, 256);
+                  c = fs.readSync(d, b, 0, 256);
                 } catch (e) {
                   if (e.toString().includes("EOF")) c = 0;
                   else throw e;
@@ -10336,11 +10328,11 @@ var require_dijkstra = __commonJS({
         var predecessors = {};
         var costs = {};
         costs[s] = 0;
-        var open2 = dijkstra.PriorityQueue.make();
-        open2.push(s, 0);
+        var open = dijkstra.PriorityQueue.make();
+        open.push(s, 0);
         var closest, u, v, cost_of_s_to_u, adjacent_nodes, cost_of_e, cost_of_s_to_u_plus_cost_of_e, cost_of_s_to_v, first_visit;
-        while (!open2.empty()) {
-          closest = open2.pop();
+        while (!open.empty()) {
+          closest = open.pop();
           u = closest.value;
           cost_of_s_to_u = closest.cost;
           adjacent_nodes = graph[u] || {};
@@ -10352,7 +10344,7 @@ var require_dijkstra = __commonJS({
               first_visit = typeof costs[v] === "undefined";
               if (first_visit || cost_of_s_to_v > cost_of_s_to_u_plus_cost_of_e) {
                 costs[v] = cost_of_s_to_u_plus_cost_of_e;
-                open2.push(v, cost_of_s_to_u_plus_cost_of_e);
+                open.push(v, cost_of_s_to_u_plus_cost_of_e);
                 predecessors[v] = u;
               }
             }
@@ -10599,10 +10591,10 @@ var require_segments = __commonJS({
       const segs = getSegmentsFromString(data, Utils.isKanjiModeEnabled());
       const nodes = buildNodes(segs);
       const graph = buildGraph(nodes, version2);
-      const path2 = dijkstra.find_path(graph.map, "start", "end");
+      const path = dijkstra.find_path(graph.map, "start", "end");
       const optimizedSegs = [];
-      for (let i = 1; i < path2.length - 1; i++) {
-        optimizedSegs.push(graph.table[path2[i]].node);
+      for (let i = 1; i < path.length - 1; i++) {
+        optimizedSegs.push(graph.table[path[i]].node);
       }
       return exports.fromArray(mergeSegments(optimizedSegs));
     };
@@ -13038,7 +13030,7 @@ var require_utils3 = __commonJS({
 // node_modules/qrcode/lib/renderer/png.js
 var require_png2 = __commonJS({
   "node_modules/qrcode/lib/renderer/png.js"(exports) {
-    var fs6 = __require("fs");
+    var fs = __require("fs");
     var PNG = require_png().PNG;
     var Utils = require_utils3();
     exports.render = function render(qrData, options) {
@@ -13079,7 +13071,7 @@ var require_png2 = __commonJS({
       });
       png.pack();
     };
-    exports.renderToFile = function renderToFile(path2, qrData, options, cb) {
+    exports.renderToFile = function renderToFile(path, qrData, options, cb) {
       if (typeof cb === "undefined") {
         cb = options;
         options = void 0;
@@ -13090,7 +13082,7 @@ var require_png2 = __commonJS({
         called = true;
         cb.apply(null, args);
       };
-      const stream = fs6.createWriteStream(path2);
+      const stream = fs.createWriteStream(path);
       stream.on("error", done);
       stream.on("close", done);
       exports.renderToFileStream(stream, qrData, options);
@@ -13152,14 +13144,14 @@ var require_utf8 = __commonJS({
       }
       return output;
     };
-    exports.renderToFile = function renderToFile(path2, qrData, options, cb) {
+    exports.renderToFile = function renderToFile(path, qrData, options, cb) {
       if (typeof cb === "undefined") {
         cb = options;
         options = void 0;
       }
-      const fs6 = __require("fs");
+      const fs = __require("fs");
       const utf8 = exports.render(qrData, options);
-      fs6.writeFile(path2, utf8, cb);
+      fs.writeFile(path, utf8, cb);
     };
   }
 });
@@ -13280,7 +13272,7 @@ var require_svg_tag = __commonJS({
       return str;
     }
     function qrToPath(data, size, margin) {
-      let path2 = "";
+      let path = "";
       let moveBy = 0;
       let newRow = false;
       let lineLength = 0;
@@ -13291,19 +13283,19 @@ var require_svg_tag = __commonJS({
         if (data[i]) {
           lineLength++;
           if (!(i > 0 && col > 0 && data[i - 1])) {
-            path2 += newRow ? svgCmd("M", col + margin, 0.5 + row + margin) : svgCmd("m", moveBy, 0);
+            path += newRow ? svgCmd("M", col + margin, 0.5 + row + margin) : svgCmd("m", moveBy, 0);
             moveBy = 0;
             newRow = false;
           }
           if (!(col + 1 < size && data[i + 1])) {
-            path2 += svgCmd("h", lineLength);
+            path += svgCmd("h", lineLength);
             lineLength = 0;
           }
         } else {
           moveBy++;
         }
       }
-      return path2;
+      return path;
     }
     exports.render = function render(qrData, options, cb) {
       const opts = Utils.getOptions(options);
@@ -13311,10 +13303,10 @@ var require_svg_tag = __commonJS({
       const data = qrData.modules.data;
       const qrcodesize = size + opts.margin * 2;
       const bg = !opts.color.light.a ? "" : "<path " + getColorAttrib(opts.color.light, "fill") + ' d="M0 0h' + qrcodesize + "v" + qrcodesize + 'H0z"/>';
-      const path2 = "<path " + getColorAttrib(opts.color.dark, "stroke") + ' d="' + qrToPath(data, size, opts.margin) + '"/>';
+      const path = "<path " + getColorAttrib(opts.color.dark, "stroke") + ' d="' + qrToPath(data, size, opts.margin) + '"/>';
       const viewBox = 'viewBox="0 0 ' + qrcodesize + " " + qrcodesize + '"';
       const width = !opts.width ? "" : 'width="' + opts.width + '" height="' + opts.width + '" ';
-      const svgTag = '<svg xmlns="http://www.w3.org/2000/svg" ' + width + viewBox + ' shape-rendering="crispEdges">' + bg + path2 + "</svg>\n";
+      const svgTag = '<svg xmlns="http://www.w3.org/2000/svg" ' + width + viewBox + ' shape-rendering="crispEdges">' + bg + path + "</svg>\n";
       if (typeof cb === "function") {
         cb(null, svgTag);
       }
@@ -13328,15 +13320,15 @@ var require_svg = __commonJS({
   "node_modules/qrcode/lib/renderer/svg.js"(exports) {
     var svgTagRenderer = require_svg_tag();
     exports.render = svgTagRenderer.render;
-    exports.renderToFile = function renderToFile(path2, qrData, options, cb) {
+    exports.renderToFile = function renderToFile(path, qrData, options, cb) {
       if (typeof cb === "undefined") {
         cb = options;
         options = void 0;
       }
-      const fs6 = __require("fs");
+      const fs = __require("fs");
       const svgTag = exports.render(qrData, options);
       const xmlStr = '<?xml version="1.0" encoding="utf-8"?><!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">' + svgTag;
-      fs6.writeFile(path2, xmlStr, cb);
+      fs.writeFile(path, xmlStr, cb);
     };
   }
 });
@@ -13494,8 +13486,8 @@ var require_server = __commonJS({
         cb
       };
     }
-    function getTypeFromFilename(path2) {
-      return path2.slice((path2.lastIndexOf(".") - 1 >>> 0) + 2).toLowerCase();
+    function getTypeFromFilename(path) {
+      return path.slice((path.lastIndexOf(".") - 1 >>> 0) + 2).toLowerCase();
     }
     function getRendererFromType(type) {
       switch (type) {
@@ -13559,17 +13551,17 @@ var require_server = __commonJS({
       const renderer = getRendererFromType(params.opts.type);
       return render(renderer.renderToBuffer, text2, params);
     };
-    exports.toFile = function toFile(path2, text2, opts, cb) {
-      if (typeof path2 !== "string" || !(typeof text2 === "string" || typeof text2 === "object")) {
+    exports.toFile = function toFile(path, text2, opts, cb) {
+      if (typeof path !== "string" || !(typeof text2 === "string" || typeof text2 === "object")) {
         throw new Error("Invalid argument");
       }
       if (arguments.length < 3 && !canPromise()) {
         throw new Error("Too few arguments provided");
       }
       const params = checkParams(text2, opts, cb);
-      const type = params.opts.type || getTypeFromFilename(path2);
+      const type = params.opts.type || getTypeFromFilename(path);
       const renderer = getRendererFromType(type);
-      const renderToFile = renderer.renderToFile.bind(null, path2);
+      const renderToFile = renderer.renderToFile.bind(null, path);
       return render(renderToFile, text2, params);
     };
     exports.toFileStream = function toFileStream(stream, text2, opts) {
@@ -13588,595 +13580,6 @@ var require_server = __commonJS({
 var require_lib = __commonJS({
   "node_modules/qrcode/lib/index.js"(exports, module) {
     module.exports = require_server();
-  }
-});
-
-// node_modules/is-docker/index.js
-import fs from "node:fs";
-function hasDockerEnv() {
-  try {
-    fs.statSync("/.dockerenv");
-    return true;
-  } catch {
-    return false;
-  }
-}
-function hasDockerCGroup() {
-  try {
-    return fs.readFileSync("/proc/self/cgroup", "utf8").includes("docker");
-  } catch {
-    return false;
-  }
-}
-function isDocker() {
-  if (isDockerCached === void 0) {
-    isDockerCached = hasDockerEnv() || hasDockerCGroup();
-  }
-  return isDockerCached;
-}
-var isDockerCached;
-var init_is_docker = __esm({
-  "node_modules/is-docker/index.js"() {
-  }
-});
-
-// node_modules/is-inside-container/index.js
-import fs2 from "node:fs";
-function isInsideContainer() {
-  if (cachedResult === void 0) {
-    cachedResult = hasContainerEnv() || isDocker();
-  }
-  return cachedResult;
-}
-var cachedResult, hasContainerEnv;
-var init_is_inside_container = __esm({
-  "node_modules/is-inside-container/index.js"() {
-    init_is_docker();
-    hasContainerEnv = () => {
-      try {
-        fs2.statSync("/run/.containerenv");
-        return true;
-      } catch {
-        return false;
-      }
-    };
-  }
-});
-
-// node_modules/is-wsl/index.js
-import process4 from "node:process";
-import os from "node:os";
-import fs3 from "node:fs";
-var isWsl, is_wsl_default;
-var init_is_wsl = __esm({
-  "node_modules/is-wsl/index.js"() {
-    init_is_inside_container();
-    isWsl = () => {
-      if (process4.platform !== "linux") {
-        return false;
-      }
-      if (os.release().toLowerCase().includes("microsoft")) {
-        if (isInsideContainer()) {
-          return false;
-        }
-        return true;
-      }
-      try {
-        if (fs3.readFileSync("/proc/version", "utf8").toLowerCase().includes("microsoft")) {
-          return !isInsideContainer();
-        }
-      } catch {
-      }
-      if (fs3.existsSync("/proc/sys/fs/binfmt_misc/WSLInterop") || fs3.existsSync("/run/WSL")) {
-        return !isInsideContainer();
-      }
-      return false;
-    };
-    is_wsl_default = process4.env.__IS_WSL_TEST__ ? isWsl : isWsl();
-  }
-});
-
-// node_modules/wsl-utils/index.js
-import process5 from "node:process";
-import fs4, { constants as fsConstants } from "node:fs/promises";
-var wslDrivesMountPoint, powerShellPathFromWsl, powerShellPath;
-var init_wsl_utils = __esm({
-  "node_modules/wsl-utils/index.js"() {
-    init_is_wsl();
-    init_is_wsl();
-    wslDrivesMountPoint = /* @__PURE__ */ (() => {
-      const defaultMountPoint = "/mnt/";
-      let mountPoint;
-      return async function() {
-        if (mountPoint) {
-          return mountPoint;
-        }
-        const configFilePath = "/etc/wsl.conf";
-        let isConfigFileExists = false;
-        try {
-          await fs4.access(configFilePath, fsConstants.F_OK);
-          isConfigFileExists = true;
-        } catch {
-        }
-        if (!isConfigFileExists) {
-          return defaultMountPoint;
-        }
-        const configContent = await fs4.readFile(configFilePath, { encoding: "utf8" });
-        const configMountPoint = /(?<!#.*)root\s*=\s*(?<mountPoint>.*)/g.exec(configContent);
-        if (!configMountPoint) {
-          return defaultMountPoint;
-        }
-        mountPoint = configMountPoint.groups.mountPoint.trim();
-        mountPoint = mountPoint.endsWith("/") ? mountPoint : `${mountPoint}/`;
-        return mountPoint;
-      };
-    })();
-    powerShellPathFromWsl = async () => {
-      const mountPoint = await wslDrivesMountPoint();
-      return `${mountPoint}c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe`;
-    };
-    powerShellPath = async () => {
-      if (is_wsl_default) {
-        return powerShellPathFromWsl();
-      }
-      return `${process5.env.SYSTEMROOT || process5.env.windir || String.raw`C:\Windows`}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
-    };
-  }
-});
-
-// node_modules/define-lazy-prop/index.js
-function defineLazyProperty(object3, propertyName, valueGetter) {
-  const define2 = (value) => Object.defineProperty(object3, propertyName, { value, enumerable: true, writable: true });
-  Object.defineProperty(object3, propertyName, {
-    configurable: true,
-    enumerable: true,
-    get() {
-      const result = valueGetter();
-      define2(result);
-      return result;
-    },
-    set(value) {
-      define2(value);
-    }
-  });
-  return object3;
-}
-var init_define_lazy_prop = __esm({
-  "node_modules/define-lazy-prop/index.js"() {
-  }
-});
-
-// node_modules/default-browser-id/index.js
-import { promisify } from "node:util";
-import process6 from "node:process";
-import { execFile } from "node:child_process";
-async function defaultBrowserId() {
-  if (process6.platform !== "darwin") {
-    throw new Error("macOS only");
-  }
-  const { stdout } = await execFileAsync("defaults", ["read", "com.apple.LaunchServices/com.apple.launchservices.secure", "LSHandlers"]);
-  const match = /LSHandlerRoleAll = "(?!-)(?<id>[^"]+?)";\s+?LSHandlerURLScheme = (?:http|https);/.exec(stdout);
-  const browserId = match?.groups.id ?? "com.apple.Safari";
-  if (browserId === "com.apple.safari") {
-    return "com.apple.Safari";
-  }
-  return browserId;
-}
-var execFileAsync;
-var init_default_browser_id = __esm({
-  "node_modules/default-browser-id/index.js"() {
-    execFileAsync = promisify(execFile);
-  }
-});
-
-// node_modules/run-applescript/index.js
-import process7 from "node:process";
-import { promisify as promisify2 } from "node:util";
-import { execFile as execFile2, execFileSync } from "node:child_process";
-async function runAppleScript(script, { humanReadableOutput = true, signal } = {}) {
-  if (process7.platform !== "darwin") {
-    throw new Error("macOS only");
-  }
-  const outputArguments = humanReadableOutput ? [] : ["-ss"];
-  const execOptions = {};
-  if (signal) {
-    execOptions.signal = signal;
-  }
-  const { stdout } = await execFileAsync2("osascript", ["-e", script, outputArguments], execOptions);
-  return stdout.trim();
-}
-var execFileAsync2;
-var init_run_applescript = __esm({
-  "node_modules/run-applescript/index.js"() {
-    execFileAsync2 = promisify2(execFile2);
-  }
-});
-
-// node_modules/bundle-name/index.js
-async function bundleName(bundleId) {
-  return runAppleScript(`tell application "Finder" to set app_path to application file id "${bundleId}" as string
-tell application "System Events" to get value of property list item "CFBundleName" of property list file (app_path & ":Contents:Info.plist")`);
-}
-var init_bundle_name = __esm({
-  "node_modules/bundle-name/index.js"() {
-    init_run_applescript();
-  }
-});
-
-// node_modules/default-browser/windows.js
-import { promisify as promisify3 } from "node:util";
-import { execFile as execFile3 } from "node:child_process";
-async function defaultBrowser(_execFileAsync = execFileAsync3) {
-  const { stdout } = await _execFileAsync("reg", [
-    "QUERY",
-    " HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\http\\UserChoice",
-    "/v",
-    "ProgId"
-  ]);
-  const match = /ProgId\s*REG_SZ\s*(?<id>\S+)/.exec(stdout);
-  if (!match) {
-    throw new UnknownBrowserError(`Cannot find Windows browser in stdout: ${JSON.stringify(stdout)}`);
-  }
-  const { id } = match.groups;
-  const dotIndex = id.lastIndexOf(".");
-  const hyphenIndex = id.lastIndexOf("-");
-  const baseIdByDot = dotIndex === -1 ? void 0 : id.slice(0, dotIndex);
-  const baseIdByHyphen = hyphenIndex === -1 ? void 0 : id.slice(0, hyphenIndex);
-  return windowsBrowserProgIds[id] ?? windowsBrowserProgIds[baseIdByDot] ?? windowsBrowserProgIds[baseIdByHyphen] ?? { name: id, id };
-}
-var execFileAsync3, windowsBrowserProgIds, _windowsBrowserProgIdMap, UnknownBrowserError;
-var init_windows = __esm({
-  "node_modules/default-browser/windows.js"() {
-    execFileAsync3 = promisify3(execFile3);
-    windowsBrowserProgIds = {
-      MSEdgeHTM: { name: "Edge", id: "com.microsoft.edge" },
-      // The missing `L` is correct.
-      MSEdgeBHTML: { name: "Edge Beta", id: "com.microsoft.edge.beta" },
-      MSEdgeDHTML: { name: "Edge Dev", id: "com.microsoft.edge.dev" },
-      AppXq0fevzme2pys62n3e0fbqa7peapykr8v: { name: "Edge", id: "com.microsoft.edge.old" },
-      ChromeHTML: { name: "Chrome", id: "com.google.chrome" },
-      ChromeBHTML: { name: "Chrome Beta", id: "com.google.chrome.beta" },
-      ChromeDHTML: { name: "Chrome Dev", id: "com.google.chrome.dev" },
-      ChromiumHTM: { name: "Chromium", id: "org.chromium.Chromium" },
-      BraveHTML: { name: "Brave", id: "com.brave.Browser" },
-      BraveBHTML: { name: "Brave Beta", id: "com.brave.Browser.beta" },
-      BraveDHTML: { name: "Brave Dev", id: "com.brave.Browser.dev" },
-      BraveSSHTM: { name: "Brave Nightly", id: "com.brave.Browser.nightly" },
-      FirefoxURL: { name: "Firefox", id: "org.mozilla.firefox" },
-      OperaStable: { name: "Opera", id: "com.operasoftware.Opera" },
-      VivaldiHTM: { name: "Vivaldi", id: "com.vivaldi.Vivaldi" },
-      "IE.HTTP": { name: "Internet Explorer", id: "com.microsoft.ie" }
-    };
-    _windowsBrowserProgIdMap = new Map(Object.entries(windowsBrowserProgIds));
-    UnknownBrowserError = class extends Error {
-    };
-  }
-});
-
-// node_modules/default-browser/index.js
-import { promisify as promisify4 } from "node:util";
-import process8 from "node:process";
-import { execFile as execFile4 } from "node:child_process";
-async function defaultBrowser2() {
-  if (process8.platform === "darwin") {
-    const id = await defaultBrowserId();
-    const name = await bundleName(id);
-    return { name, id };
-  }
-  if (process8.platform === "linux") {
-    const { stdout } = await execFileAsync4("xdg-mime", ["query", "default", "x-scheme-handler/http"]);
-    const id = stdout.trim();
-    const name = titleize(id.replace(/.desktop$/, "").replace("-", " "));
-    return { name, id };
-  }
-  if (process8.platform === "win32") {
-    return defaultBrowser();
-  }
-  throw new Error("Only macOS, Linux, and Windows are supported");
-}
-var execFileAsync4, titleize;
-var init_default_browser = __esm({
-  "node_modules/default-browser/index.js"() {
-    init_default_browser_id();
-    init_bundle_name();
-    init_windows();
-    execFileAsync4 = promisify4(execFile4);
-    titleize = (string3) => string3.toLowerCase().replaceAll(/(?:^|\s|-)\S/g, (x) => x.toUpperCase());
-  }
-});
-
-// node_modules/open/index.js
-var open_exports = {};
-__export(open_exports, {
-  apps: () => apps,
-  default: () => open_default,
-  openApp: () => openApp
-});
-import process9 from "node:process";
-import { Buffer as Buffer2 } from "node:buffer";
-import path from "node:path";
-import { fileURLToPath as fileURLToPath4 } from "node:url";
-import { promisify as promisify5 } from "node:util";
-import childProcess from "node:child_process";
-import fs5, { constants as fsConstants2 } from "node:fs/promises";
-async function getWindowsDefaultBrowserFromWsl() {
-  const powershellPath = await powerShellPath();
-  const rawCommand = String.raw`(Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice").ProgId`;
-  const encodedCommand = Buffer2.from(rawCommand, "utf16le").toString("base64");
-  const { stdout } = await execFile5(
-    powershellPath,
-    [
-      "-NoProfile",
-      "-NonInteractive",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-EncodedCommand",
-      encodedCommand
-    ],
-    { encoding: "utf8" }
-  );
-  const progId = stdout.trim();
-  const browserMap = {
-    ChromeHTML: "com.google.chrome",
-    BraveHTML: "com.brave.Browser",
-    MSEdgeHTM: "com.microsoft.edge",
-    FirefoxURL: "org.mozilla.firefox"
-  };
-  return browserMap[progId] ? { id: browserMap[progId] } : {};
-}
-function detectArchBinary(binary) {
-  if (typeof binary === "string" || Array.isArray(binary)) {
-    return binary;
-  }
-  const { [arch]: archBinary } = binary;
-  if (!archBinary) {
-    throw new Error(`${arch} is not supported`);
-  }
-  return archBinary;
-}
-function detectPlatformBinary({ [platform]: platformBinary }, { wsl }) {
-  if (wsl && is_wsl_default) {
-    return detectArchBinary(wsl);
-  }
-  if (!platformBinary) {
-    throw new Error(`${platform} is not supported`);
-  }
-  return detectArchBinary(platformBinary);
-}
-var execFile5, __dirname5, localXdgOpenPath, platform, arch, pTryEach, baseOpen, open, openApp, apps, open_default;
-var init_open = __esm({
-  "node_modules/open/index.js"() {
-    init_wsl_utils();
-    init_define_lazy_prop();
-    init_default_browser();
-    init_is_inside_container();
-    execFile5 = promisify5(childProcess.execFile);
-    __dirname5 = path.dirname(fileURLToPath4(import.meta.url));
-    localXdgOpenPath = path.join(__dirname5, "xdg-open");
-    ({ platform, arch } = process9);
-    pTryEach = async (array2, mapper) => {
-      let latestError;
-      for (const item of array2) {
-        try {
-          return await mapper(item);
-        } catch (error2) {
-          latestError = error2;
-        }
-      }
-      throw latestError;
-    };
-    baseOpen = async (options) => {
-      options = {
-        wait: false,
-        background: false,
-        newInstance: false,
-        allowNonzeroExitCode: false,
-        ...options
-      };
-      if (Array.isArray(options.app)) {
-        return pTryEach(options.app, (singleApp) => baseOpen({
-          ...options,
-          app: singleApp
-        }));
-      }
-      let { name: app, arguments: appArguments = [] } = options.app ?? {};
-      appArguments = [...appArguments];
-      if (Array.isArray(app)) {
-        return pTryEach(app, (appName) => baseOpen({
-          ...options,
-          app: {
-            name: appName,
-            arguments: appArguments
-          }
-        }));
-      }
-      if (app === "browser" || app === "browserPrivate") {
-        const ids = {
-          "com.google.chrome": "chrome",
-          "google-chrome.desktop": "chrome",
-          "com.brave.Browser": "brave",
-          "org.mozilla.firefox": "firefox",
-          "firefox.desktop": "firefox",
-          "com.microsoft.msedge": "edge",
-          "com.microsoft.edge": "edge",
-          "com.microsoft.edgemac": "edge",
-          "microsoft-edge.desktop": "edge"
-        };
-        const flags = {
-          chrome: "--incognito",
-          brave: "--incognito",
-          firefox: "--private-window",
-          edge: "--inPrivate"
-        };
-        const browser = is_wsl_default ? await getWindowsDefaultBrowserFromWsl() : await defaultBrowser2();
-        if (browser.id in ids) {
-          const browserName = ids[browser.id];
-          if (app === "browserPrivate") {
-            appArguments.push(flags[browserName]);
-          }
-          return baseOpen({
-            ...options,
-            app: {
-              name: apps[browserName],
-              arguments: appArguments
-            }
-          });
-        }
-        throw new Error(`${browser.name} is not supported as a default browser`);
-      }
-      let command;
-      const cliArguments = [];
-      const childProcessOptions = {};
-      if (platform === "darwin") {
-        command = "open";
-        if (options.wait) {
-          cliArguments.push("--wait-apps");
-        }
-        if (options.background) {
-          cliArguments.push("--background");
-        }
-        if (options.newInstance) {
-          cliArguments.push("--new");
-        }
-        if (app) {
-          cliArguments.push("-a", app);
-        }
-      } else if (platform === "win32" || is_wsl_default && !isInsideContainer() && !app) {
-        command = await powerShellPath();
-        cliArguments.push(
-          "-NoProfile",
-          "-NonInteractive",
-          "-ExecutionPolicy",
-          "Bypass",
-          "-EncodedCommand"
-        );
-        if (!is_wsl_default) {
-          childProcessOptions.windowsVerbatimArguments = true;
-        }
-        const encodedArguments = ["Start"];
-        if (options.wait) {
-          encodedArguments.push("-Wait");
-        }
-        if (app) {
-          encodedArguments.push(`"\`"${app}\`""`);
-          if (options.target) {
-            appArguments.push(options.target);
-          }
-        } else if (options.target) {
-          encodedArguments.push(`"${options.target}"`);
-        }
-        if (appArguments.length > 0) {
-          appArguments = appArguments.map((argument) => `"\`"${argument}\`""`);
-          encodedArguments.push("-ArgumentList", appArguments.join(","));
-        }
-        options.target = Buffer2.from(encodedArguments.join(" "), "utf16le").toString("base64");
-      } else {
-        if (app) {
-          command = app;
-        } else {
-          const isBundled = !__dirname5 || __dirname5 === "/";
-          let exeLocalXdgOpen = false;
-          try {
-            await fs5.access(localXdgOpenPath, fsConstants2.X_OK);
-            exeLocalXdgOpen = true;
-          } catch {
-          }
-          const useSystemXdgOpen = process9.versions.electron ?? (platform === "android" || isBundled || !exeLocalXdgOpen);
-          command = useSystemXdgOpen ? "xdg-open" : localXdgOpenPath;
-        }
-        if (appArguments.length > 0) {
-          cliArguments.push(...appArguments);
-        }
-        if (!options.wait) {
-          childProcessOptions.stdio = "ignore";
-          childProcessOptions.detached = true;
-        }
-      }
-      if (platform === "darwin" && appArguments.length > 0) {
-        cliArguments.push("--args", ...appArguments);
-      }
-      if (options.target) {
-        cliArguments.push(options.target);
-      }
-      const subprocess = childProcess.spawn(command, cliArguments, childProcessOptions);
-      if (options.wait) {
-        return new Promise((resolve, reject) => {
-          subprocess.once("error", reject);
-          subprocess.once("close", (exitCode) => {
-            if (!options.allowNonzeroExitCode && exitCode > 0) {
-              reject(new Error(`Exited with code ${exitCode}`));
-              return;
-            }
-            resolve(subprocess);
-          });
-        });
-      }
-      subprocess.unref();
-      return subprocess;
-    };
-    open = (target, options) => {
-      if (typeof target !== "string") {
-        throw new TypeError("Expected a `target`");
-      }
-      return baseOpen({
-        ...options,
-        target
-      });
-    };
-    openApp = (name, options) => {
-      if (typeof name !== "string" && !Array.isArray(name)) {
-        throw new TypeError("Expected a valid `name`");
-      }
-      const { arguments: appArguments = [] } = options ?? {};
-      if (appArguments !== void 0 && appArguments !== null && !Array.isArray(appArguments)) {
-        throw new TypeError("Expected `appArguments` as Array type");
-      }
-      return baseOpen({
-        ...options,
-        app: {
-          name,
-          arguments: appArguments
-        }
-      });
-    };
-    apps = {};
-    defineLazyProperty(apps, "chrome", () => detectPlatformBinary({
-      darwin: "google chrome",
-      win32: "chrome",
-      linux: ["google-chrome", "google-chrome-stable", "chromium"]
-    }, {
-      wsl: {
-        ia32: "/mnt/c/Program Files (x86)/Google/Chrome/Application/chrome.exe",
-        x64: ["/mnt/c/Program Files/Google/Chrome/Application/chrome.exe", "/mnt/c/Program Files (x86)/Google/Chrome/Application/chrome.exe"]
-      }
-    }));
-    defineLazyProperty(apps, "brave", () => detectPlatformBinary({
-      darwin: "brave browser",
-      win32: "brave",
-      linux: ["brave-browser", "brave"]
-    }, {
-      wsl: {
-        ia32: "/mnt/c/Program Files (x86)/BraveSoftware/Brave-Browser/Application/brave.exe",
-        x64: ["/mnt/c/Program Files/BraveSoftware/Brave-Browser/Application/brave.exe", "/mnt/c/Program Files (x86)/BraveSoftware/Brave-Browser/Application/brave.exe"]
-      }
-    }));
-    defineLazyProperty(apps, "firefox", () => detectPlatformBinary({
-      darwin: "firefox",
-      win32: String.raw`C:\Program Files\Mozilla Firefox\firefox.exe`,
-      linux: "firefox"
-    }, {
-      wsl: "/mnt/c/Program Files/Mozilla Firefox/firefox.exe"
-    }));
-    defineLazyProperty(apps, "edge", () => detectPlatformBinary({
-      darwin: "microsoft edge",
-      win32: "msedge",
-      linux: ["microsoft-edge", "microsoft-edge-dev"]
-    }, {
-      wsl: "/mnt/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"
-    }));
-    defineLazyProperty(apps, "browser", () => "browser");
-    defineLazyProperty(apps, "browserPrivate", () => "browserPrivate");
-    open_default = open;
   }
 });
 
@@ -14539,8 +13942,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path2, errorMaps, issueData } = params;
-  const fullPath = [...path2, ...issueData.path || []];
+  const { data, path, errorMaps, issueData } = params;
+  const fullPath = [...path, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -14655,11 +14058,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path2, key) {
+  constructor(parent, value, path, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path2;
+    this._path = path;
     this._key = key;
   }
   get path() {
@@ -18303,10 +17706,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path2) {
-  if (!path2)
+function getElementAtPath(obj, path) {
+  if (!path)
     return obj;
-  return path2.reduce((acc, key) => acc?.[key], obj);
+  return path.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -18689,11 +18092,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path2, issues) {
+function prefixIssues(path, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path2);
+    iss.path.unshift(path);
     return iss;
   });
 }
@@ -28212,7 +27615,7 @@ var StdioServerTransport = class {
 import { join as join7, dirname as dirname4 } from "path";
 import { homedir } from "os";
 import { existsSync as existsSync5, cpSync as cpSync2, mkdirSync as mkdirSync5 } from "fs";
-import { fileURLToPath as fileURLToPath5 } from "url";
+import { fileURLToPath as fileURLToPath4 } from "url";
 
 // src/bridge-manager.ts
 import { mkdirSync as mkdirSync3, existsSync as existsSync3, readFileSync as readFileSync3, writeFileSync as writeFileSync2, renameSync, cpSync } from "fs";
@@ -29129,11 +28532,11 @@ function enrichMessagesWithChatName(accountId, msgs) {
     return msgs;
   }
 }
-async function doPost(path2, body) {
+async function doPost(path, body) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
   try {
-    return await fetch(baseUrl + path2, {
+    return await fetch(baseUrl + path, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -29169,10 +28572,10 @@ async function flushAll() {
 var __dirname3 = dirname2(fileURLToPath2(import.meta.url));
 var log2 = (msg) => console.error(`[hermeneia] ${msg}`);
 function getBinaryName() {
-  const platform2 = process.platform === "win32" ? "windows" : process.platform;
-  const arch2 = process.arch === "x64" ? "amd64" : process.arch;
+  const platform = process.platform === "win32" ? "windows" : process.platform;
+  const arch = process.arch === "x64" ? "amd64" : process.arch;
   const ext = process.platform === "win32" ? ".exe" : "";
-  return `hermeneia-bridge-${platform2}-${arch2}${ext}`;
+  return `hermeneia-bridge-${platform}-${arch}${ext}`;
 }
 var WhatsAppBridge = class extends EventEmitter {
   proc = null;
@@ -29988,6 +29391,7 @@ var DemoBridge = class extends EventEmitter2 {
 // src/qr-server.ts
 var import_qrcode = __toESM(require_lib(), 1);
 import { createServer } from "http";
+import { spawn as spawn2 } from "child_process";
 import { existsSync as existsSync2, readFileSync as readFileSync2 } from "fs";
 import { join as join4 } from "path";
 var log4 = (msg) => console.error(`[hermeneia:qr] ${msg}`);
@@ -30269,21 +29673,19 @@ function stopQRServer() {
     log4("QR server stopped");
   }
 }
-async function openBrowser(url2) {
-  try {
-    const open2 = (await Promise.resolve().then(() => (init_open(), open_exports))).default;
-    await open2(url2);
-  } catch {
-    log4(`Open ${url2} in your browser to connect WhatsApp`);
-  }
+function openBrowser(url2) {
+  const [cmd, args] = process.platform === "darwin" ? ["open", [url2]] : process.platform === "win32" ? ["cmd", ["/c", "start", "", url2]] : ["xdg-open", [url2]];
+  const proc = spawn2(cmd, args, { stdio: "ignore", detached: true });
+  proc.on("error", () => log4(`Open ${url2} in your browser to connect WhatsApp`));
+  proc.unref();
 }
 
 // src/notify.ts
-import { spawn as spawn2 } from "child_process";
+import { spawn as spawn3 } from "child_process";
 var log5 = (msg) => console.error(`[hermeneia:notify] ${msg}`);
 function notifyMac(title, body) {
   const esc2 = (s) => s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-  const proc = spawn2(
+  const proc = spawn3(
     "osascript",
     ["-e", `display notification "${esc2(body)}" with title "${esc2(title)}"`],
     { stdio: "ignore", detached: true }
@@ -30295,7 +29697,7 @@ function notifyMac(title, body) {
 function notifyWindows(title, body) {
   const esc2 = (s) => s.replace(/'/g, "''");
   const script = `[void][System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms');$n = New-Object System.Windows.Forms.NotifyIcon;$n.Icon = [System.Drawing.SystemIcons]::Information;$n.BalloonTipTitle = '${esc2(title)}';$n.BalloonTipText = '${esc2(body)}';$n.Visible = $true;$n.ShowBalloonTip(10000);Start-Sleep -Seconds 10;$n.Dispose()`;
-  const proc = spawn2(
+  const proc = spawn3(
     "powershell",
     ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script],
     { stdio: "ignore", detached: true }
@@ -30306,7 +29708,7 @@ function notifyWindows(title, body) {
 }
 function notifyLinux(title, body) {
   if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) return;
-  const proc = spawn2("notify-send", ["--app-name=Hermeneia", title, body], {
+  const proc = spawn3("notify-send", ["--app-name=Hermeneia", title, body], {
     stdio: "ignore",
     detached: true
   });
@@ -30676,10 +30078,10 @@ var BridgeManager = class {
     return join5(this.dataDir, "accounts.json");
   }
   loadAccounts() {
-    const path2 = this.accountsPath();
-    if (!existsSync3(path2)) return [];
+    const path = this.accountsPath();
+    if (!existsSync3(path)) return [];
     try {
-      return JSON.parse(readFileSync3(path2, "utf-8"));
+      return JSON.parse(readFileSync3(path, "utf-8"));
     } catch {
       return [];
     }
@@ -31042,7 +30444,7 @@ Use the add_account tool to connect a new account, or check if an existing accou
   server2.setRequestHandler(
     ListToolsRequestSchema,
     async () => ({
-      tools: [
+      tools: selectProfile([
         // Account management tools
         {
           name: "list_accounts",
@@ -31359,9 +30761,22 @@ Use the add_account tool to connect a new account, or check if an existing accou
           },
           annotations: { readOnlyHint: true, openWorldHint: false }
         }
-      ]
+      ])
     })
   );
+}
+var MINIMAL_TOOLS = [
+  "search_contacts",
+  "list_chats",
+  "list_messages",
+  "send_message",
+  "download_media"
+];
+function selectProfile(tools) {
+  const profile = (process.env.HERMENEIA_TOOL_PROFILE || "full").toLowerCase();
+  if (profile !== "minimal") return tools;
+  const kept = tools.filter((t) => MINIMAL_TOOLS.includes(t.name));
+  return kept.length ? kept : tools;
 }
 function text(content) {
   return { content: [{ type: "text", text: content }] };
@@ -31439,7 +30854,7 @@ function isAlive(pid) {
 }
 
 // src/index.ts
-var __dirname6 = dirname4(fileURLToPath5(import.meta.url));
+var __dirname5 = dirname4(fileURLToPath4(import.meta.url));
 var log8 = (msg) => console.error(`[hermeneia] ${msg}`);
 function getDataDir() {
   if (process.env.HERMENEIA_DATA_DIR) return process.env.HERMENEIA_DATA_DIR;
@@ -31453,7 +30868,7 @@ function getDataDir() {
 }
 var dataDir = getDataDir();
 function migrateOldDataDir() {
-  const oldDir = join7(__dirname6, "..", "data");
+  const oldDir = join7(__dirname5, "..", "data");
   if (oldDir === dataDir) return;
   if (!existsSync5(oldDir)) return;
   if (existsSync5(join7(dataDir, "accounts.json"))) return;
