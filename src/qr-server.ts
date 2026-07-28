@@ -5,6 +5,7 @@
 // via /setup/{accountId} routes.
 
 import { createServer, type Server } from "http";
+import { spawn } from "child_process";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import QRCode from "qrcode";
@@ -347,11 +348,25 @@ export function stopQRServer(): void {
   }
 }
 
-async function openBrowser(url: string): Promise<void> {
-  try {
-    const open = (await import("open")).default;
-    await open(url);
-  } catch {
-    log(`Open ${url} in your browser to connect WhatsApp`);
-  }
+/** Open the setup page, or tell the user where to find it.
+ *
+ *  Spawned directly rather than via the `open` package. That package's child
+ *  emits its failure asynchronously, so `try { await open(url) } catch` does
+ *  NOT catch a missing opener binary — the 'error' event reaches no listener
+ *  and Node terminates the process. The observed result is brutal: Hermeneia
+ *  logs "MCP server running on stdio", then dies half a second later while
+ *  trying to pop a browser tab, and the client only sees the connection close.
+ *
+ *  Spawning here means the error handler is attached in the same tick, which
+ *  is the same shape notify.ts already uses for the same reason. Opening a
+ *  browser is a convenience; it must never be able to take down the server. */
+function openBrowser(url: string): void {
+  const [cmd, args] =
+    process.platform === "darwin" ? ["open", [url]] :
+    process.platform === "win32"  ? ["cmd", ["/c", "start", "", url]] :
+    ["xdg-open", [url]];
+
+  const proc = spawn(cmd, args, { stdio: "ignore", detached: true });
+  proc.on("error", () => log(`Open ${url} in your browser to connect WhatsApp`));
+  proc.unref();
 }

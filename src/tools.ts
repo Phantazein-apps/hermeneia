@@ -467,7 +467,7 @@ export function registerTools(server: Server, manager: BridgeManager): void {
   server.setRequestHandler(
     ListToolsRequestSchema,
     async () => ({
-      tools: [
+      tools: selectProfile([
         // Account management tools
         {
           name: "list_accounts",
@@ -797,9 +797,53 @@ export function registerTools(server: Server, manager: BridgeManager): void {
           },
           annotations: { readOnlyHint: true, openWorldHint: false },
         },
-      ],
+      ]),
     })
   );
+}
+
+// ── Tool profiles ─────────────────────────────────────────────────
+
+/**
+ * The tools a chat-sized model should be offered.
+ *
+ * All 18 tools are the right surface for a large model: finer tools mean more
+ * precise calls, and Claude picks correctly among them. A 3B model does not —
+ * accuracy falls as the list grows, and most of this list is not what anyone
+ * asks a chat window for. Four are account plumbing (add/remove/list accounts,
+ * check_status), several are narrow lookups reachable through broader tools,
+ * and epistole_backfill is internal.
+ *
+ * Collapsing to a single dispatcher tool would be worse, not better: a small
+ * model then has to encode the operation into a nested argument, against one
+ * description carrying every option at once. Small models are good at picking
+ * a well-named tool from a short list, and bad at constructing structured
+ * payloads. So: keep the tools distinct, cut the list.
+ *
+ * These five cover what a person actually asks — who, which conversation,
+ * what was said, reply, and see the photo.
+ */
+const MINIMAL_TOOLS = [
+  "search_contacts",
+  "list_chats",
+  "list_messages",
+  "send_message",
+  "download_media",
+];
+
+/**
+ * HERMENEIA_TOOL_PROFILE: "full" (default) or "minimal".
+ *
+ * Default stays full so existing Claude users and anything already wired up
+ * are unaffected — a smaller surface is the local-model consumer's need, not
+ * a correction that applies everywhere.
+ */
+function selectProfile<T extends { name: string }>(tools: T[]): T[] {
+  const profile = (process.env.HERMENEIA_TOOL_PROFILE || "full").toLowerCase();
+  if (profile !== "minimal") return tools;
+  const kept = tools.filter((t) => MINIMAL_TOOLS.includes(t.name));
+  // A typo in the env var must not silently strip the server to nothing.
+  return kept.length ? kept : tools;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────

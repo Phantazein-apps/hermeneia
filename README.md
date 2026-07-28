@@ -193,7 +193,7 @@ Origin chain: [`lharries/whatsapp-mcp`](https://github.com/lharries/whatsapp-mcp
 - **Community / parent-group awareness** - chats know which Community they belong to.
 - **Full contact resolution** - phone numbers, LIDs, push names, verified names. Upstream stops at JIDs.
 - **Named linked device** in WhatsApp Linked Devices instead of a generic browser string — defaults to "Claude", set your own with `HERMENEIA_DEVICE_NAME` (Refugio brands it).
-- **18 tools** vs upstream's ~10.
+- **18 tools** vs upstream's ~10 — or 5, with `HERMENEIA_TOOL_PROFILE=minimal`. Finer tools mean more precise calls from a large model, but a small local model loses accuracy as the list grows, and account management and internal backfill aren't what anyone asks a chat window for. The minimal profile keeps `search_contacts`, `list_chats`, `list_messages`, `send_message`, `download_media`. Refugio sets it automatically; the default is unchanged.
 
 ### Vs other WhatsApp MCPs
 
