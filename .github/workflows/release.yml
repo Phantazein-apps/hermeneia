@@ -3,6 +3,15 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # Manual entrance: cut a release without pushing a tag locally. The tag is
+  # created by the release step at the dispatched ref. Useful when a tag push
+  # isn't possible (restricted client) or to re-cut a failed release.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to create and release (e.g. v0.4.11)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -67,6 +76,9 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
+          # On a tag push, github.ref_name IS the tag. On workflow_dispatch,
+          # inputs.tag names the tag to create at the dispatched commit.
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: |
             dist/hermeneia.mcpb
             dist/hermeneia-bridge-*.tar.gz
