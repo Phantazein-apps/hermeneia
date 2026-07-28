@@ -60,7 +60,11 @@ jobs:
 
       # 3. Pack the .mcpb — .mcpbignore trims it to darwin-arm64 + windows-amd64,
       #    the two platforms Claude Desktop runs on.
-      - run: npx @anthropic-ai/mcpb pack
+      # `mcpb pack` defaults to writing <name>.mcpb in the CURRENT directory,
+      # so the release step's dist/hermeneia.mcpb glob never matched and the
+      # bundle was silently absent from the release. Name the output path
+      # explicitly instead of relying on the default.
+      - run: npx @anthropic-ai/mcpb pack . dist/hermeneia.mcpb
       - run: npx @anthropic-ai/mcpb validate dist/hermeneia.mcpb || true
 
       # 4. Tar the standalone bridge binaries for non-mcpb users
@@ -70,8 +74,14 @@ jobs:
           cd dist
           for f in hermeneia-bridge-*; do
             [ -e "$f" ] || continue
-            tar czf "${f}.tar.gz" "$f"
+            case "$f" in *.tar.gz) continue;; esac
+            # Strip the Windows .exe suffix from the ARCHIVE name so every
+            # platform's asset is hermeneia-bridge-<os>-<arch>.tar.gz — the
+            # exact name Refugio's installer requests. The binary inside
+            # keeps its .exe extension.
+            tar czf "${f%.exe}.tar.gz" "$f"
           done
+          ls -la *.tar.gz
 
       - name: Release
         uses: softprops/action-gh-release@v2
