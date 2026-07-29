@@ -3,11 +3,11 @@
 // Manages multiple WhatsAppBridge instances, each with its own
 // Go subprocess and data directory.
 
-import { mkdirSync, existsSync, readFileSync, writeFileSync, renameSync, cpSync } from "fs";
+import { mkdirSync, existsSync, readFileSync, writeFileSync, renameSync, cpSync, rmSync } from "fs";
 import { join } from "path";
 import { WhatsAppBridge } from "./bridge.js";
 import { DemoBridge } from "./demo-bridge.js";
-import { startQRServer, stopQRServer } from "./qr-server.js";
+import { startQRServer, stopQRServer, ensureSetupServer, setRelinkHandler } from "./qr-server.js";
 import { isMirrorEnabled, mirrorHeartbeat, flushAll as flushMirror } from "./mirror.js";
 import { notify } from "./notify.js";
 import type { AccountInfo } from "./types.js";
@@ -116,6 +116,13 @@ export class BridgeManager {
   async startup(): Promise<void> {
     this.migrateOldLayout();
 
+    // The setup page exists for the whole run, not only while pairing. An
+    // account that is linked but offline emits no QR, so nothing used to start
+    // this server — which made a host's "open WhatsApp setup" a dead link in
+    // exactly the situation someone would click it.
+    ensureSetupServer(this.qrPort);
+    setRelinkHandler((id) => this.relinkAccount(id));
+
     const accounts = this.loadAccounts();
     if (accounts.length === 0) {
       // First run — create default account
@@ -194,6 +201,39 @@ export class BridgeManager {
 
     const setupUrl = `http://localhost:${this.qrPort}/setup/${id}`;
     return { setupUrl };
+  }
+
+  /**
+   * Force this account to pair again.
+   *
+   * Reconnecting cannot fix a device WhatsApp has unlinked — the stored
+   * session is simply no longer valid, and the only remedy is a fresh QR. So
+   * this stops the bridge, discards the session store, and starts it again;
+   * with no session the bridge emits a QR and the setup page shows it.
+   *
+   * The account entry itself is kept (id, name, phone) so the user is
+   * re-linking the same account rather than creating a new one, and message
+   * history in the shared store is untouched.
+   */
+  async relinkAccount(id: string): Promise<void> {
+    const account = this.loadAccounts().find((a) => a.id === id);
+    if (!account) throw new Error(`unknown account "${id}"`);
+
+    const bridge = this.bridges.get(id);
+    if (bridge) {
+      await bridge.stop();
+      this.bridges.delete(id);
+    }
+
+    // whatsmeow keeps the linked-device session here. Removing it is what makes
+    // the next start ask for a QR; anything else in the account dir is left be.
+    const accountDir = join(this.dataDir, "accounts", id);
+    for (const f of ["whatsmeow.db", "whatsmeow.db-shm", "whatsmeow.db-wal"]) {
+      try { rmSync(join(accountDir, f), { force: true }); } catch { /* nothing to drop */ }
+    }
+    log(`Account "${id}" session cleared — re-linking`);
+
+    await this.startBridge(id, account.name, account.phone);
   }
 
   /** Remove an account */
