@@ -27618,7 +27618,7 @@ import { existsSync as existsSync5, cpSync as cpSync2, mkdirSync as mkdirSync5 }
 import { fileURLToPath as fileURLToPath4 } from "url";
 
 // src/bridge-manager.ts
-import { mkdirSync as mkdirSync3, existsSync as existsSync3, readFileSync as readFileSync3, writeFileSync as writeFileSync2, renameSync, cpSync } from "fs";
+import { mkdirSync as mkdirSync3, existsSync as existsSync3, readFileSync as readFileSync3, writeFileSync as writeFileSync2, renameSync, cpSync, rmSync } from "fs";
 import { join as join5 } from "path";
 
 // src/bridge.ts
@@ -29397,6 +29397,10 @@ import { join as join4 } from "path";
 var log4 = (msg) => console.error(`[hermeneia:qr] ${msg}`);
 var server = null;
 var sessions = /* @__PURE__ */ new Map();
+var relinkHandler = null;
+function setRelinkHandler(fn) {
+  relinkHandler = fn;
+}
 var autoOpenedAccounts = /* @__PURE__ */ new Set();
 function getOrCreateSession(bridge, accountId) {
   let session = sessions.get(accountId);
@@ -29498,6 +29502,12 @@ var SETUP_HTML = `<!DOCTYPE html>
     }
     #status { color: #888; font-size: 13px; margin-top: 16px; }
     .waiting { display: none; }
+    #relink {
+      margin-top: 20px; padding: 10px 18px; cursor: pointer;
+      background: #25D366; color: #06281a; border: 0; border-radius: 8px;
+      font-size: 14px; font-weight: 600;
+    }
+    #relink:disabled { opacity: .55; cursor: default; }
   </style>
 </head>
 <body>
@@ -29519,6 +29529,17 @@ var SETUP_HTML = `<!DOCTYPE html>
         <li>Tap <strong>Link a Device</strong> and scan this code</li>
       </ol>
       <p id="status">Waiting for scan...</p>
+      <div id="idle" class="waiting">
+        <p style="color:#ccc; font-size:15px; line-height:1.6;">
+          This account is already linked, so there is no code to scan.
+        </p>
+        <p style="color:#888; font-size:13px; margin-top:8px;">
+          If WhatsApp still isn't working, the phone may have unlinked this
+          device. Re-linking asks for a fresh code.
+        </p>
+        <button id="relink">Re-link this phone</button>
+        <p id="relink-msg" style="color:#888; font-size:13px; margin-top:12px;"></p>
+      </div>
     </div>
 
     <div id="success-view" class="waiting">
@@ -29544,10 +29565,40 @@ var SETUP_HTML = `<!DOCTYPE html>
           img.src = data.qr_data_url;
           document.getElementById('spinner').style.display = 'none';
           img.style.display = 'block';
+          showPairing(true);
+        } else if (!data.pairing) {
+          // Linked and not pairing. Spinning "Connecting..." forever at someone
+          // whose account is simply offline is the state this page used to be
+          // unreachable in, so it must not be the state it lies in either.
+          showPairing(false, data.can_relink);
         }
       } catch {}
       setTimeout(poll, 2000);
     }
+
+    function showPairing(isPairing, canRelink) {
+      document.getElementById('qr-container').style.display = isPairing ? '' : 'none';
+      document.querySelector('.steps').style.display = isPairing ? '' : 'none';
+      document.getElementById('status').style.display = isPairing ? '' : 'none';
+      document.getElementById('idle').classList.toggle('waiting', isPairing);
+      if (!isPairing) document.getElementById('relink').style.display = canRelink ? '' : 'none';
+    }
+
+    document.getElementById('relink').addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const msg = document.getElementById('relink-msg');
+      btn.disabled = true;
+      msg.textContent = 'Asking WhatsApp for a new code...';
+      try {
+        const res = await fetch('/api/relink/' + accountId, { method: 'POST' });
+        if (!res.ok) throw new Error((await res.json()).error || 'failed');
+        msg.textContent = 'Waiting for the code...';
+      } catch (err) {
+        btn.disabled = false;
+        msg.textContent = String(err.message || err);
+      }
+    });
+
     poll();
   </script>
 </body>
@@ -29576,11 +29627,36 @@ function startQRServer(bridge, port = 3456, initialQr, dataDir2, accountId = "de
       session.authenticated = true;
       setTimeout(() => {
         sessions.delete(accountId);
-        if (sessions.size === 0) stopQRServer();
       }, 3e4);
     });
     bridge._qrListenerAttached = true;
   }
+  ensureSetupServer(port);
+  let hasExistingAuth = false;
+  try {
+    if (dataDir2) {
+      const accountsPath = join4(dataDir2, "..", "accounts.json");
+      if (existsSync2(accountsPath)) {
+        const accounts = JSON.parse(readFileSync2(accountsPath, "utf-8"));
+        hasExistingAuth = accounts.some((a) => a.id === accountId && a.phone);
+      }
+    }
+  } catch {
+  }
+  if (!hasExistingAuth && !autoOpenedAccounts.has(accountId)) {
+    autoOpenedAccounts.add(accountId);
+    setTimeout(() => {
+      const actualPort = server?.address()?.port ?? port;
+      const setupUrl = accountId === "default" ? `http://localhost:${actualPort}/setup` : `http://localhost:${actualPort}/setup/${accountId}`;
+      openBrowser(setupUrl);
+    }, 500);
+  } else if (hasExistingAuth) {
+    log4(`QR generated during reconnect for "${accountId}" \u2014 not auto-opening browser`);
+  } else {
+    log4(`QR regenerated for "${accountId}" \u2014 setup page already open, not reopening`);
+  }
+}
+function ensureSetupServer(port = 3456) {
   if (!server) {
     server = createServer((req, res) => {
       const url2 = req.url ?? "/";
@@ -29606,8 +29682,33 @@ function startQRServer(bridge, port = 3456, initialQr, dataDir2, accountId = "de
         res.end(
           JSON.stringify({
             authenticated: s?.authenticated ?? false,
-            qr_data_url: s?.qrDataUrl ?? null
+            qr_data_url: s?.qrDataUrl ?? null,
+            // No pairing session at all is a distinct state from "pairing, no
+            // QR yet". Without it the page spins "Connecting…" forever at
+            // someone whose account is linked and simply offline.
+            pairing: !!s,
+            can_relink: !!relinkHandler
           })
+        );
+        return;
+      }
+      const relinkMatch = url2.match(/^\/api\/relink\/([^/?]+)/);
+      if (relinkMatch && req.method === "POST") {
+        const id = relinkMatch[1];
+        if (!relinkHandler) {
+          res.writeHead(501, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "re-linking is not available in this host" }));
+          return;
+        }
+        relinkHandler(id).then(
+          () => {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end("{}");
+          },
+          (e) => {
+            res.writeHead(500, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: String(e?.message || e) }));
+          }
         );
         return;
       }
@@ -29640,29 +29741,6 @@ function startQRServer(bridge, port = 3456, initialQr, dataDir2, accountId = "de
       const actualPort = server?.address()?.port ?? port;
       log4(`Setup page: http://localhost:${actualPort}/setup`);
     });
-  }
-  let hasExistingAuth = false;
-  try {
-    if (dataDir2) {
-      const accountsPath = join4(dataDir2, "..", "accounts.json");
-      if (existsSync2(accountsPath)) {
-        const accounts = JSON.parse(readFileSync2(accountsPath, "utf-8"));
-        hasExistingAuth = accounts.some((a) => a.id === accountId && a.phone);
-      }
-    }
-  } catch {
-  }
-  if (!hasExistingAuth && !autoOpenedAccounts.has(accountId)) {
-    autoOpenedAccounts.add(accountId);
-    setTimeout(() => {
-      const actualPort = server?.address()?.port ?? port;
-      const setupUrl = accountId === "default" ? `http://localhost:${actualPort}/setup` : `http://localhost:${actualPort}/setup/${accountId}`;
-      openBrowser(setupUrl);
-    }, 500);
-  } else if (hasExistingAuth) {
-    log4(`QR generated during reconnect for "${accountId}" \u2014 not auto-opening browser`);
-  } else {
-    log4(`QR regenerated for "${accountId}" \u2014 setup page already open, not reopening`);
   }
 }
 function stopQRServer() {
@@ -29797,6 +29875,8 @@ var BridgeManager = class {
   /** Start all saved accounts */
   async startup() {
     this.migrateOldLayout();
+    ensureSetupServer(this.qrPort);
+    setRelinkHandler((id) => this.relinkAccount(id));
     const accounts = this.loadAccounts();
     if (accounts.length === 0) {
       log6("No accounts found, creating default account...");
@@ -29856,6 +29936,36 @@ var BridgeManager = class {
     }
     const setupUrl = `http://localhost:${this.qrPort}/setup/${id}`;
     return { setupUrl };
+  }
+  /**
+   * Force this account to pair again.
+   *
+   * Reconnecting cannot fix a device WhatsApp has unlinked — the stored
+   * session is simply no longer valid, and the only remedy is a fresh QR. So
+   * this stops the bridge, discards the session store, and starts it again;
+   * with no session the bridge emits a QR and the setup page shows it.
+   *
+   * The account entry itself is kept (id, name, phone) so the user is
+   * re-linking the same account rather than creating a new one, and message
+   * history in the shared store is untouched.
+   */
+  async relinkAccount(id) {
+    const account = this.loadAccounts().find((a) => a.id === id);
+    if (!account) throw new Error(`unknown account "${id}"`);
+    const bridge = this.bridges.get(id);
+    if (bridge) {
+      await bridge.stop();
+      this.bridges.delete(id);
+    }
+    const accountDir = join5(this.dataDir, "accounts", id);
+    for (const f of ["whatsmeow.db", "whatsmeow.db-shm", "whatsmeow.db-wal"]) {
+      try {
+        rmSync(join5(accountDir, f), { force: true });
+      } catch {
+      }
+    }
+    log6(`Account "${id}" session cleared \u2014 re-linking`);
+    await this.startBridge(id, account.name, account.phone);
   }
   /** Remove an account */
   async removeAccount(id) {

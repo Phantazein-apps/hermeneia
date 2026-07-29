@@ -23,6 +23,14 @@ interface QRSession {
 }
 const sessions = new Map<string, QRSession>();
 
+// Installed by the BridgeManager. Kept as a hook rather than an import so this
+// module has no dependency on the manager, and so the page degrades to
+// read-only if a host wires up the server without one.
+let relinkHandler: ((accountId: string) => Promise<void>) | null = null;
+export function setRelinkHandler(fn: (accountId: string) => Promise<void>): void {
+  relinkHandler = fn;
+}
+
 // Tracks accounts whose setup page we've already auto-opened in this process,
 // so subsequent QR regenerations / bridge respawns don't pop new browser tabs.
 const autoOpenedAccounts = new Set<string>();
@@ -129,6 +137,12 @@ const SETUP_HTML = `<!DOCTYPE html>
     }
     #status { color: #888; font-size: 13px; margin-top: 16px; }
     .waiting { display: none; }
+    #relink {
+      margin-top: 20px; padding: 10px 18px; cursor: pointer;
+      background: #25D366; color: #06281a; border: 0; border-radius: 8px;
+      font-size: 14px; font-weight: 600;
+    }
+    #relink:disabled { opacity: .55; cursor: default; }
   </style>
 </head>
 <body>
@@ -150,6 +164,17 @@ const SETUP_HTML = `<!DOCTYPE html>
         <li>Tap <strong>Link a Device</strong> and scan this code</li>
       </ol>
       <p id="status">Waiting for scan...</p>
+      <div id="idle" class="waiting">
+        <p style="color:#ccc; font-size:15px; line-height:1.6;">
+          This account is already linked, so there is no code to scan.
+        </p>
+        <p style="color:#888; font-size:13px; margin-top:8px;">
+          If WhatsApp still isn't working, the phone may have unlinked this
+          device. Re-linking asks for a fresh code.
+        </p>
+        <button id="relink">Re-link this phone</button>
+        <p id="relink-msg" style="color:#888; font-size:13px; margin-top:12px;"></p>
+      </div>
     </div>
 
     <div id="success-view" class="waiting">
@@ -175,10 +200,40 @@ const SETUP_HTML = `<!DOCTYPE html>
           img.src = data.qr_data_url;
           document.getElementById('spinner').style.display = 'none';
           img.style.display = 'block';
+          showPairing(true);
+        } else if (!data.pairing) {
+          // Linked and not pairing. Spinning "Connecting..." forever at someone
+          // whose account is simply offline is the state this page used to be
+          // unreachable in, so it must not be the state it lies in either.
+          showPairing(false, data.can_relink);
         }
       } catch {}
       setTimeout(poll, 2000);
     }
+
+    function showPairing(isPairing, canRelink) {
+      document.getElementById('qr-container').style.display = isPairing ? '' : 'none';
+      document.querySelector('.steps').style.display = isPairing ? '' : 'none';
+      document.getElementById('status').style.display = isPairing ? '' : 'none';
+      document.getElementById('idle').classList.toggle('waiting', isPairing);
+      if (!isPairing) document.getElementById('relink').style.display = canRelink ? '' : 'none';
+    }
+
+    document.getElementById('relink').addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const msg = document.getElementById('relink-msg');
+      btn.disabled = true;
+      msg.textContent = 'Asking WhatsApp for a new code...';
+      try {
+        const res = await fetch('/api/relink/' + accountId, { method: 'POST' });
+        if (!res.ok) throw new Error((await res.json()).error || 'failed');
+        msg.textContent = 'Waiting for the code...';
+      } catch (err) {
+        btn.disabled = false;
+        msg.textContent = String(err.message || err);
+      }
+    });
+
     poll();
   </script>
 </body>
@@ -218,18 +273,65 @@ export function startQRServer(
 
     bridge.on("connected", () => {
       session.authenticated = true;
-      // Clean up session after page shows success
-      setTimeout(() => {
-        sessions.delete(accountId);
-        // Stop server if no more sessions
-        if (sessions.size === 0) stopQRServer();
-      }, 30_000);
+      // Drop the finished pairing session, but LEAVE THE SERVER UP. Stopping
+      // it once nothing was pairing is what made the setup page a dead link:
+      // an account that is paired-but-offline emits no QR, so nothing ever
+      // restarted the server, and the host's "open setup" action led nowhere.
+      setTimeout(() => { sessions.delete(accountId); }, 30_000);
     });
 
     (bridge as any)._qrListenerAttached = true;
   }
 
-  // Start HTTP server if not already running
+  ensureSetupServer(port);
+
+  // Only auto-open browser on first-time setup.
+  // Check accounts.json for a saved phone number — if present, the account
+  // was previously authenticated (this is a reconnect, don't open browser).
+  // We can't check whatsmeow.db existence because the Go bridge creates it
+  // before generating the QR code.
+  let hasExistingAuth = false;
+  try {
+    if (dataDir) {
+      const accountsPath = join(dataDir, "..", "accounts.json");
+      if (existsSync(accountsPath)) {
+        const accounts = JSON.parse(readFileSync(accountsPath, "utf-8"));
+        hasExistingAuth = accounts.some((a: any) => a.id === accountId && a.phone);
+      }
+    }
+  } catch {}
+  // Only auto-open the browser the FIRST time we emit a QR for this account
+  // in this process. whatsmeow regenerates QRs (every ~14 min when one expires)
+  // and our manager respawns bridges on exit — both fire "qr" events that
+  // land here. Without dedupe, each one pops a new browser tab, producing the
+  // "QR window loop" the user sees. The setup page polls /api/status for fresh
+  // QRs, so a single open tab is sufficient.
+  if (!hasExistingAuth && !autoOpenedAccounts.has(accountId)) {
+    autoOpenedAccounts.add(accountId);
+    setTimeout(() => {
+      const actualPort = (server?.address() as any)?.port ?? port;
+      const setupUrl = accountId === "default"
+        ? `http://localhost:${actualPort}/setup`
+        : `http://localhost:${actualPort}/setup/${accountId}`;
+      openBrowser(setupUrl);
+    }, 500);
+  } else if (hasExistingAuth) {
+    log(`QR generated during reconnect for "${accountId}" — not auto-opening browser`);
+  } else {
+    log(`QR regenerated for "${accountId}" — setup page already open, not reopening`);
+  }
+}
+
+/**
+ * Start the setup server, whether or not anything is currently pairing.
+ *
+ * The page has something useful to say in every state: a QR when pairing is
+ * needed, and otherwise the account's actual condition plus a way to re-link.
+ * Starting it only on a QR event meant the one state where a user most wants
+ * to visit it — linked but not connecting — was the state where it did not
+ * exist.
+ */
+export function ensureSetupServer(port = 3456): void {
   if (!server) {
     server = createServer((req, res) => {
       const url = req.url ?? "/";
@@ -262,7 +364,33 @@ export function startQRServer(
           JSON.stringify({
             authenticated: s?.authenticated ?? false,
             qr_data_url: s?.qrDataUrl ?? null,
+            // No pairing session at all is a distinct state from "pairing, no
+            // QR yet". Without it the page spins "Connecting…" forever at
+            // someone whose account is linked and simply offline.
+            pairing: !!s,
+            can_relink: !!relinkHandler,
           })
+        );
+        return;
+      }
+
+      // Re-link: drop the stored session so the bridge asks for a new QR. This
+      // is the actual remedy when WhatsApp has dropped the linked device —
+      // reconnecting cannot fix that, only re-pairing can.
+      const relinkMatch = url.match(/^\/api\/relink\/([^/?]+)/);
+      if (relinkMatch && req.method === "POST") {
+        const id = relinkMatch[1];
+        if (!relinkHandler) {
+          res.writeHead(501, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "re-linking is not available in this host" }));
+          return;
+        }
+        relinkHandler(id).then(
+          () => { res.writeHead(200, { "Content-Type": "application/json" }); res.end("{}"); },
+          (e) => {
+            res.writeHead(500, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: String(e?.message || e) }));
+          }
         );
         return;
       }
@@ -302,41 +430,6 @@ export function startQRServer(
     });
   }
 
-  // Only auto-open browser on first-time setup.
-  // Check accounts.json for a saved phone number — if present, the account
-  // was previously authenticated (this is a reconnect, don't open browser).
-  // We can't check whatsmeow.db existence because the Go bridge creates it
-  // before generating the QR code.
-  let hasExistingAuth = false;
-  try {
-    if (dataDir) {
-      const accountsPath = join(dataDir, "..", "accounts.json");
-      if (existsSync(accountsPath)) {
-        const accounts = JSON.parse(readFileSync(accountsPath, "utf-8"));
-        hasExistingAuth = accounts.some((a: any) => a.id === accountId && a.phone);
-      }
-    }
-  } catch {}
-  // Only auto-open the browser the FIRST time we emit a QR for this account
-  // in this process. whatsmeow regenerates QRs (every ~14 min when one expires)
-  // and our manager respawns bridges on exit — both fire "qr" events that
-  // land here. Without dedupe, each one pops a new browser tab, producing the
-  // "QR window loop" the user sees. The setup page polls /api/status for fresh
-  // QRs, so a single open tab is sufficient.
-  if (!hasExistingAuth && !autoOpenedAccounts.has(accountId)) {
-    autoOpenedAccounts.add(accountId);
-    setTimeout(() => {
-      const actualPort = (server?.address() as any)?.port ?? port;
-      const setupUrl = accountId === "default"
-        ? `http://localhost:${actualPort}/setup`
-        : `http://localhost:${actualPort}/setup/${accountId}`;
-      openBrowser(setupUrl);
-    }, 500);
-  } else if (hasExistingAuth) {
-    log(`QR generated during reconnect for "${accountId}" — not auto-opening browser`);
-  } else {
-    log(`QR regenerated for "${accountId}" — setup page already open, not reopening`);
-  }
 }
 
 export function stopQRServer(): void {
