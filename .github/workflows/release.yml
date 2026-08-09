@@ -84,7 +84,7 @@ jobs:
           ls -la *.tar.gz
 
       - name: Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           # On a tag push, github.ref_name IS the tag. On workflow_dispatch,
           # inputs.tag names the tag to create at the dispatched commit.
